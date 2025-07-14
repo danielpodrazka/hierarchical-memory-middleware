@@ -18,7 +18,6 @@ from hierarchical_memory_middleware.config import Config
 from hierarchical_memory_middleware.middleware.conversation_manager import (
     HierarchicalConversationManager,
 )
-from hierarchical_memory_middleware.mcp_server.memory_server import MemoryMCPServer
 
 # Configure logging
 logging.basicConfig(
@@ -27,13 +26,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Fixed conversation ID for testing (so you can restart and resume)
-TEST_CONVERSATION_ID = "test-chat-session-001"
+TEST_CONVERSATION_ID = "5bb354a9-2273-4d97-9b12-a4a0036c3fef"
 
 
 class ChatTester:
     """Interactive chat tester for the hierarchical memory system."""
 
-    def __init__(self, use_mcp_server: bool = False):
+    def __init__(self, use_mcp_server: bool = True):
         """Initialize the chat tester."""
         # Create config (load from .env file, then override test-specific settings)
         self.config = Config.from_env()
@@ -43,13 +42,17 @@ class ChatTester:
         self.config.summary_threshold = 20
 
         if use_mcp_server:
-            # Use the full MCP server
-            self.server = MemoryMCPServer(self.config)
-            self.conversation_manager = self.server.conversation_manager
+            # Connect to external MCP server
+            mcp_server_url = f"http://127.0.0.1:{self.config.mcp_port}/mcp"
+            self.conversation_manager = HierarchicalConversationManager(
+                self.config, mcp_server_url=mcp_server_url
+            )
+            self.server_url = mcp_server_url
+            self.needs_external_server = True
         else:
-            # Use conversation manager directly
+            # Use conversation manager directly without tools
             self.conversation_manager = HierarchicalConversationManager(self.config)
-            self.server = None
+            self.needs_external_server = False
 
         self.conversation_id = None
 
@@ -61,6 +64,14 @@ class ChatTester:
         print(f"🔗 Conversation ID: {TEST_CONVERSATION_ID}")
         print()
 
+        # Check for external MCP server if using MCP mode
+        if self.needs_external_server:
+            print(f"📡 Connecting to MCP server at {self.server_url}...")
+            # The connection will be tested when we first try to use tools
+            print(f"✅ Will use MCP tools from {self.server_url}")
+            print(f"⚠️  Note: Make sure the MCP server is running with:")
+            print(f"   python hierarchical_memory_middleware/mcp_server/run_server.py")
+            print()
         # Start/resume conversation
         self.conversation_id = await self.conversation_manager.start_conversation(
             TEST_CONVERSATION_ID
@@ -220,9 +231,9 @@ async def main():
         description="Test the hierarchical memory chat system"
     )
     parser.add_argument(
-        "--mcp",
+        "--no-mcp",
         action="store_true",
-        help="Use MCP server (default: use conversation manager directly)",
+        help="Disable MCP server (default: use MCP server with memory tools)",
     )
     parser.add_argument(
         "--start-mcp-server",
@@ -233,7 +244,7 @@ async def main():
     args = parser.parse_args()
 
     # Create and run chat tester
-    tester = ChatTester(use_mcp_server=args.mcp)
+    tester = ChatTester(use_mcp_server=not args.no_mcp)
 
     if args.start_mcp_server:
         print("🌐 Starting MCP server in background...")

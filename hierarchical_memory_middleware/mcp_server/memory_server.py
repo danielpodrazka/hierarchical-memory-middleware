@@ -20,15 +20,22 @@ class MemoryMCPServer:
         """Initialize the MCP server with storage and conversation manager."""
         self.config = config
         self.storage = DuckDBStorage(config.db_path)
-        self.conversation_manager = HierarchicalConversationManager(config, self.storage)
 
         # Create FastMCP server instance
         self.mcp = FastMCP("hierarchical-memory-server")
 
-        # Register tools
+        # Register MCP tools
         self._register_tools()
 
-        logger.info("MemoryMCPServer initialized")
+        # Start server on background port for internal use
+        self.server_url = f"http://127.0.0.1:{config.mcp_port}"
+
+        # Initialize conversation manager WITHOUT MCP tools (tools are provided by this server)
+        self.conversation_manager = HierarchicalConversationManager(
+            config, self.storage  # No MCP server URL - avoid circular dependency
+        )
+
+        logger.info(f"MemoryMCPServer initialized on {self.server_url}")
 
     def _register_tools(self) -> None:
         """Register all MCP tools."""
@@ -200,12 +207,31 @@ class MemoryMCPServer:
         """Start or resume a conversation for the MCP server."""
         return await self.conversation_manager.start_conversation(conversation_id)
 
-    def run(self, transport: str = "http", host: str = "127.0.0.1", port: int = 8000):
+    async def start_background_server(self):
+        """Start MCP server in background for internal agent use."""
+        import asyncio
+        import aiohttp
+
+        try:
+            # Start server in background task with streamable-http transport
+            logger.info(f"Starting background MCP server on port {self.config.mcp_port}")
+            task = asyncio.create_task(
+                self.mcp.run_async(transport="streamable-http", host="127.0.0.1", port=self.config.mcp_port)
+            )
+
+            logger.info(f"Background MCP server started on {self.server_url}")
+            return task
+
+        except Exception as e:
+            logger.error(f"Failed to start background MCP server: {e}")
+            raise RuntimeError(f"Failed to start MCP server: {e}")
+
+    def run(self, transport: str = "streamable-http", host: str = "127.0.0.1", port: int = 8000):
         """Run the MCP server with specified transport."""
         logger.info(f"Starting MCP server on {transport}://{host}:{port}")
         self.mcp.run(transport=transport, host=host, port=port)
 
-    async def run_async(self, transport: str = "http", host: str = "127.0.0.1", port: int = 8000):
+    async def run_async(self, transport: str = "streamable-http", host: str = "127.0.0.1", port: int = 8000):
         """Run the MCP server asynchronously with specified transport."""
         logger.info(f"Starting MCP server on {transport}://{host}:{port}")
         await self.mcp.run_async(transport=transport, host=host, port=port)

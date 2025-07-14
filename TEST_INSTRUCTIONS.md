@@ -6,7 +6,7 @@ This guide explains how to test the hierarchical memory conversation system that
 
 ### 1. Basic Chat Test
 
-Run the interactive chat with the fixed conversation node system:
+Run the interactive chat with MCP memory browsing tools (default):
 
 ```bash
 python chat_demo.py
@@ -15,16 +15,18 @@ python chat_demo.py
 This will:
 - Start a conversation with ID `test-chat-session-001`
 - Create a local database file `chat_demo.db` for persistence
-- Allow you to chat interactively
+- **Start MCP server with memory browsing tools**
+- Allow you to chat interactively with tool access
 - Show memory browsing capabilities
 
-### 2. Using MCP Server Integration
+### 2. Disabling MCP Server (Basic Mode)
 
 ```bash
-python chat_demo.py --mcp
+python chat_demo.py --no-mcp
 ```
 
-This uses the full MCP server architecture internally.
+This uses the conversation manager directly without MCP tools.
+**Note**: By default, the chat demo runs with MCP server integration enabled, giving you access to memory browsing tools.
 
 ## 💬 Chat Features
 
@@ -86,7 +88,7 @@ This test script validates:
 - `save_conversation_node()` - Our newly implemented method
 - `HierarchicalConversationManager` - Main conversation logic
 - `DuckDBStorage` - Database operations
-- `MemoryMCPServer` - MCP server integration (optional)
+- `MemoryMCPServer` - MCP server integration with memory browsing tools (default)
 
 ## 📊 Expected Behavior
 

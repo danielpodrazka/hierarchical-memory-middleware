@@ -12,6 +12,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     TextPart,
 )
+from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 from ..config import Config
 from ..storage import DuckDBStorage
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 class HierarchicalConversationManager:
     """Manages conversations with hierarchical memory compression."""
 
-    def __init__(self, config: Config, storage: Optional[DuckDBStorage] = None):
+    def __init__(self, config: Config, storage: Optional[DuckDBStorage] = None, mcp_server_url: Optional[str] = None):
         """Initialize the conversation manager."""
         self.config = config
         self.conversation_id: Optional[str] = None
@@ -39,21 +40,39 @@ class HierarchicalConversationManager:
             compressor=self.compressor, recent_node_limit=config.recent_node_limit
         )
 
-        # Initialize PydanticAI agents with history processors
-        self.work_agent = Agent(
-            model=config.work_model,
-            system_prompt="""You are a helpful AI assistant. You provide accurate and helpful responses.
+        # Initialize PydanticAI agent with optional MCP server integration
+        system_prompt = """You are a helpful AI assistant. You provide accurate and helpful responses.
 
             You have access to conversation memory that allows you to remember previous interactions.
-            When you need to reference earlier parts of the conversation, you can do so naturally.
-            """,
-            history_processors=[self._hierarchical_memory_processor],
-        )
+            When you need to reference earlier parts of the conversation, you can do so naturally."""
+
+        # Create MCP server client if URL provided
+        mcp_servers = []
+        if mcp_server_url:
+
+            mcp_server = MCPServerStreamableHTTP(
+                url=mcp_server_url,
+                tool_prefix="memory",  # Prefix tools with 'memory_'
+            )
+            mcp_servers.append(mcp_server)
+
+        # Create agent
+        agent_kwargs = {
+            "model": config.work_model,
+            "system_prompt": system_prompt,
+            "history_processors": [self._hierarchical_memory_processor],
+        }
+
+        if mcp_servers:
+            agent_kwargs["mcp_servers"] = mcp_servers
+
+        self.work_agent = Agent(**agent_kwargs)
+        self.has_mcp_tools = bool(mcp_servers)
 
         logger.info(
             f"Initialized HierarchicalConversationManager with model: {config.work_model}"
+            + (" and MCP tools" if self.has_mcp_tools else "")
         )
-
     async def _hierarchical_memory_processor(
         self, messages: List[ModelMessage]
     ) -> List[ModelMessage]:
@@ -111,15 +130,18 @@ class HierarchicalConversationManager:
             if len(memory_messages) > 0:
                 # Start with conversation memory
                 combined_messages = memory_messages.copy()
-                
-                # Add any new messages (especially the current user message)
-                # Filter out older messages that might already be in memory
-                for msg in messages:
-                    # Always include the latest user message to ensure we have something to respond to
-                    if isinstance(msg, ModelRequest):
-                        combined_messages.append(msg)
 
-                logger.debug(f"Memory processor: returning {len(combined_messages)} total messages")
+                # Add recent messages to preserve tool use/result pairs and current context
+                # We need to preserve the complete recent conversation including tool interactions
+                recent_message_limit = 5  # Keep last few messages to preserve tool chains
+                recent_messages = messages[-recent_message_limit:] if len(messages) > recent_message_limit else messages
+                
+                for msg in recent_messages:
+                    # Add all recent messages to preserve tool use/result pairing
+                    # This includes ModelRequest (user), ModelResponse (assistant), and any tool messages
+                    combined_messages.append(msg)
+
+                logger.debug(f"Memory processor: returning {len(combined_messages)} total messages ({len(memory_messages)} from memory + {len(recent_messages)} recent)")
                 return combined_messages
             else:
                 # No memory yet, use provided messages as-is
@@ -160,7 +182,13 @@ class HierarchicalConversationManager:
         try:
             # Generate AI response using PydanticAI with history processor
             # The history processor will automatically manage conversation memory
-            response = await self.work_agent.run(user_prompt=user_message)
+            if self.has_mcp_tools:
+                # Use MCP context manager for tools
+                async with self.work_agent.run_mcp_servers():
+                    response = await self.work_agent.run(user_prompt=user_message)
+            else:
+                # No MCP tools, run directly
+                response = await self.work_agent.run(user_prompt=user_message)
 
             # Save the user message as a node
             user_node = await self.storage.save_conversation_node(

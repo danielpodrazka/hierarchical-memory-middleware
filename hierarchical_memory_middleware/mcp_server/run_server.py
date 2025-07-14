@@ -24,7 +24,7 @@ def setup_logging(verbose: bool = False) -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr),
-        ]
+        ],
     )
 
 
@@ -35,39 +35,29 @@ async def main() -> None:
     )
     parser.add_argument(
         "--transport",
-        choices=["http", "stdio", "sse"],
-        default="http",
-        help="Transport protocol to use (default: http)"
+        choices=["http", "streamable-http", "stdio", "sse"],
+        default="streamable-http",
+        help="Transport protocol to use (default: streamable-http)",
     )
     parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Host to bind to (default: 127.0.0.1)"
+        "--host", default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)"
     )
     parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port to bind to (default: 8000)"
+        "--port", type=int, default=8000, help="Port to bind to (default: 8000)"
     )
     parser.add_argument(
         "--db-path",
         default="./conversations.db",
-        help="Path to DuckDB database file (default: ./conversations.db)"
+        help="Path to DuckDB database file (default: ./conversations.db)",
     )
     parser.add_argument(
         "--work-model",
         default="claude-sonnet-4-20250514",
-        help="Model to use for work tasks (default: claude-sonnet-4-20250514)"
+        help="Model to use for work tasks (default: claude-sonnet-4-20250514)",
     )
+    parser.add_argument("--conversation-id", help="Resume a specific conversation ID")
     parser.add_argument(
-        "--conversation-id",
-        help="Resume a specific conversation ID"
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose logging"
+        "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
 
     args = parser.parse_args()
@@ -77,12 +67,14 @@ async def main() -> None:
     logger = logging.getLogger(__name__)
 
     try:
-        # Create configuration
-        config = Config(
-            db_path=args.db_path,
-            work_model=args.work_model,
-            summary_model=args.work_model,  # Use same model for now
-        )
+        # Create configuration (load from .env file at project root)
+        env_file_path = project_root / ".env"
+        config = Config.from_env(env_file=str(env_file_path))
+        # Override with command line arguments
+        config.db_path = args.db_path
+        config.work_model = args.work_model
+        config.summary_model = args.work_model  # Use same model for now
+        config.mcp_port = args.port  # Use the port from command line
 
         logger.info(f"Initializing MCP server with config: {config}")
 
@@ -101,7 +93,9 @@ async def main() -> None:
         logger.info(
             f"Starting MCP server on {args.transport}://{args.host}:{args.port}"
         )
-        logger.info("Available tools: expand_node, search_memory, get_conversation_stats, get_recent_nodes")
+        logger.info(
+            "Available tools: expand_node, search_memory, get_conversation_stats, get_recent_nodes"
+        )
         logger.info("Press Ctrl+C to stop the server")
 
         if args.transport == "stdio":
@@ -110,9 +104,7 @@ async def main() -> None:
         else:
             # For HTTP transports, use async run
             await server.run_async(
-                transport=args.transport,
-                host=args.host,
-                port=args.port
+                transport=args.transport, host=args.host, port=args.port
             )
 
     except KeyboardInterrupt:
