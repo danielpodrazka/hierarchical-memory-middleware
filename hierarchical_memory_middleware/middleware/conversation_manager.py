@@ -105,13 +105,24 @@ class HierarchicalConversationManager:
                         ModelResponse(parts=[TextPart(content=node.content)])
                     )
 
-            # Combine memory with incoming messages, preferring memory over incoming history
-            # Keep only the most recent message from incoming if it's new
-            if messages and len(memory_messages) > 0:
-                # Use memory instead of provided history
-                return memory_messages
+            logger.debug(f"Memory processor: found {len(memory_messages)} memory messages, {len(messages)} incoming messages")
+            
+            # Combine memory with current/new user message
+            if len(memory_messages) > 0:
+                # Start with conversation memory
+                combined_messages = memory_messages.copy()
+                
+                # Add any new messages (especially the current user message)
+                # Filter out older messages that might already be in memory
+                for msg in messages:
+                    # Always include the latest user message to ensure we have something to respond to
+                    if isinstance(msg, ModelRequest):
+                        combined_messages.append(msg)
+
+                logger.debug(f"Memory processor: returning {len(combined_messages)} total messages")
+                return combined_messages
             else:
-                # No memory yet or fallback to provided messages
+                # No memory yet, use provided messages as-is
                 return messages
 
         except Exception as e:
@@ -159,11 +170,15 @@ class HierarchicalConversationManager:
             )
 
             # Save the AI response as a node
-            tokens_used = (
-                getattr(response, "usage", {}).get("total_tokens")
-                if hasattr(response, "usage")
-                else None
-            )
+            # Extract token usage from response
+            tokens_used = None
+            try:
+                if hasattr(response, "usage") and callable(response.usage):
+                    usage_info = response.usage()
+                    tokens_used = getattr(usage_info, "total_tokens", None)
+            except Exception as e:
+                logger.debug(f"Could not extract token usage: {e}")
+                tokens_used = None
             
             ai_node = await self.storage.save_conversation_node(
                 conversation_id=self.conversation_id,
