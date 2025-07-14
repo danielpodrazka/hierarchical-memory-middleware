@@ -25,13 +25,13 @@ logger = logging.getLogger(__name__)
 class HierarchicalConversationManager:
     """Manages conversations with hierarchical memory compression."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, storage: Optional[DuckDBStorage] = None):
         """Initialize the conversation manager."""
         self.config = config
         self.conversation_id: Optional[str] = None
 
         # Initialize storage
-        self.storage = DuckDBStorage(config.db_path)
+        self.storage = storage or DuckDBStorage(config.db_path)
 
         # Initialize compression system
         self.compressor = SimpleCompressor(max_words=8)

@@ -15,7 +15,6 @@ from .compression import SimpleCompressor, CompressionManager
 from .models import (
     ConversationNode,
     ConversationState,
-    ConversationTurn,
     CompressionLevel,
     NodeType,
     CompressionResult,
@@ -30,7 +29,6 @@ __all__ = [
     "CompressionManager",
     "ConversationNode",
     "ConversationState",
-    "ConversationTurn",
     "CompressionLevel",
     "NodeType",
     "CompressionResult",

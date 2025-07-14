@@ -15,7 +15,6 @@ from hierarchical_memory_middleware.middleware.conversation_manager import (
 )
 from hierarchical_memory_middleware.models import (
     ConversationNode,
-    ConversationTurn,
     ConversationState,
     CompressionLevel,
     NodeType,
@@ -55,20 +54,6 @@ def sample_conversation_node():
         level=CompressionLevel.FULL,
     )
 
-
-@pytest.fixture
-def sample_conversation_turn():
-    """Create a sample conversation turn for testing."""
-    return ConversationTurn(
-        turn_id=1,
-        conversation_id="test-conv-1",
-        user_message="Hello, how are you?",
-        ai_response="I'm doing well, thank you!",
-        timestamp=datetime.now(),
-        tokens_used=50,
-        user_node_id=1,
-        ai_node_id=2,
-    )
 
 
 @pytest.fixture

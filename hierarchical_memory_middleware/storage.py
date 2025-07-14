@@ -8,7 +8,6 @@ from .db_utils import get_db_connection
 from .models import (
     ConversationNode,
     ConversationState,
-    ConversationTurn,
     CompressionLevel,
     NodeType,
     SearchResult,
@@ -48,83 +47,6 @@ class DuckDBStorage:
         if self._persistent_conn:
             self._persistent_conn.close()
             self._persistent_conn = None
-
-    async def save_conversation_turn(
-        self,
-        conversation_id: str,
-        user_message: str,
-        ai_response: str,
-        tokens_used: Optional[int] = None,
-        ai_components: Optional[Dict[str, Any]] = None,
-    ) -> ConversationTurn:
-        """Save a complete conversation turn (user message + AI response)."""
-        with self._get_connection() as conn:
-            result = conn.execute(
-                "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM nodes WHERE conversation_id = ?",
-                (conversation_id,),
-            ).fetchone()
-            next_sequence = result[0] if result else 1
-
-            user_node_result = conn.execute(
-                """
-                INSERT INTO nodes (
-                    conversation_id, node_type, content, sequence_number, line_count
-                ) VALUES (?, ?, ?, ?, ?)
-                RETURNING id, timestamp
-            """,
-                (
-                    conversation_id,
-                    NodeType.USER.value,
-                    user_message,
-                    next_sequence,
-                    len(user_message.splitlines()),
-                ),
-            ).fetchone()
-
-            user_node_id, timestamp = user_node_result
-
-            ai_node_result = conn.execute(
-                """
-                INSERT INTO nodes (
-                    conversation_id, node_type, content, sequence_number, line_count,
-                    tokens_used, ai_components
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                RETURNING id
-            """,
-                (
-                    conversation_id,
-                    NodeType.AI.value,
-                    ai_response,
-                    next_sequence + 1,
-                    len(ai_response.splitlines()),
-                    tokens_used,
-                    json.dumps(ai_components) if ai_components else None,
-                ),
-            ).fetchone()
-
-            ai_node_id = ai_node_result[0]
-
-            conn.execute(
-                """
-                INSERT INTO conversations (id, total_nodes)
-                VALUES (?, 2)
-                ON CONFLICT (id) DO UPDATE SET
-                    total_nodes = total_nodes + 2,
-                    last_updated = NOW()
-            """,
-                (conversation_id,),
-            )
-
-            return ConversationTurn(
-                turn_id=user_node_id,
-                conversation_id=conversation_id,
-                user_message=user_message,
-                ai_response=ai_response,
-                timestamp=timestamp,
-                tokens_used=tokens_used,
-                user_node_id=user_node_id,
-                ai_node_id=ai_node_id,
-            )
 
     async def get_conversation_nodes(
         self,

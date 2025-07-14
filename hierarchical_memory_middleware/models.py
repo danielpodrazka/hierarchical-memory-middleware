@@ -92,21 +92,6 @@ class ConversationState(BaseModel):
     last_updated: Optional[datetime] = None
 
 
-class ConversationTurn(BaseModel):
-    """A complete turn consisting of user message + AI response."""
-
-    turn_id: int
-    conversation_id: str
-    user_message: str
-    ai_response: str
-    timestamp: datetime
-    tokens_used: Optional[int] = None
-
-    # Derived from processing
-    user_node_id: Optional[int] = None
-    ai_node_id: Optional[int] = None
-
-
 class CompressionResult(BaseModel):
     """Result of compressing a conversation node."""
 
