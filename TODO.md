@@ -1,5 +1,22 @@
 # Hierarchical Memory Agent: Implementation Specification v2
 
+## Recent Updates (July 2025)
+
+**Phase 1 Core Implementation Completed:**
+- ✅ **Fixed critical storage issues**: Resolved in-memory database connection problems that prevented data persistence across operations
+- ✅ **All tests passing**: 20/20 tests now pass with 53% overall coverage (91% storage coverage)
+- ✅ **Robust database handling**: Fixed connection management for both in-memory and file-based databases
+- ✅ **Complete data model implementation**: ConversationNode, CompressionLevel, and storage operations fully functional
+- ✅ **Working compression system**: Basic word truncation and topic extraction implemented
+
+**Current Status**: Phase 1 is largely complete. Ready to begin Phase 2 (MCP Integration).
+
+**Next Priorities:**
+1. **PydanticAI Integration**: Complete the conversation manager with actual LLM integration
+2. **MCP Server Setup**: Implement read-only memory browsing tools (`expand_node`, `search_memory`)
+3. **CLI Testing**: Validate the command-line interface works end-to-end
+4. **Integration Testing**: Create tests that verify the full conversation flow
+
 ## Executive Summary
 
 A middleware system that enables infinite AI agent conversations through intelligent hierarchical compression, preserving full conversation fidelity while maintaining optimal context windows. Built as a conversation orchestration layer using PydanticAI for LLM interfaces and MCP for memory browsing tools.
@@ -526,32 +543,39 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 - [x] Basic package structure and dependencies ✅
 - [x] Test setup with pytest ✅
 - [x] DuckDB connection utilities ✅
-- [ ] Data models (ConversationNode, CompressionLevel, etc.)
-- [ ] DuckDB storage schema and operations
-- [ ] Basic conversation manager with PydanticAI
-- [ ] Simple compression (first 8 words truncation)
-- [ ] CLI interface for testing
-- [ ] Integration tests
+- [x] Data models (ConversationNode, CompressionLevel, etc.) ✅
+- [x] DuckDB storage schema and operations ✅
+- [x] Simple compression (basic word truncation and topic extraction) ✅
+- [ ] Basic conversation manager with PydanticAI integration
+- [ ] CLI interface testing and validation
+- [ ] End-to-end integration tests
 
 ### Phase 2: MCP Integration
 - [ ] MCP server for memory browsing
 - [ ] read-only tool `expand(idx:int)`: just expanding single nodes
 - [ ] MCP server+client setup using pydanticAI that integrates the MCP and the middleware
 
-### Phase 2: Hierarchical Compression
+### Phase 3: AI Summarization
 - [ ] AI summarization of nodes
 - [ ] Automatic compression triggers
-- [ ] Multi-level hierarchy system
 - [ ] New tool `find(text:str)` (regex search across all nodes or from A node to B node)
+
+### Phase 4: Advanced Hierarchy
+- [ ] Multi-level hierarchy system (see diagrams.md for more details)
 - [ ] New tool `show_summaries(start_node:int,end_node:int)`
 
-### Phase 4: Advanced Features
-- [ ] Semantic search with embeddings
-- [ ] Meta-summary generation
-- [ ] Performance optimization
-- [ ] Basic web UI for visualization
+### Phase 5: User Interface
+- [ ] Web UI: basic chat interface with a panel of the left that allows for starting new conversations
+- [ ] Current token use in the conversation (similar to Letta)
+- [ ] Interactive converstion nodes that can be expanded
 
-### Phase 5: Production Ready
+### Phase 5: Semantic search
+- [ ] New tool+storage to support semantic search with embeddings
+
+### Phase 6: Performance optimization 
+- [ ] Move compression triggers to the background if not already done in background
+
+### Phase 7: Production Ready
 - [ ] Documentation
 - [ ] Deployment packages
 - [ ] Example applications

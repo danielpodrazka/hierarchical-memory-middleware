@@ -1,10 +1,9 @@
 """DuckDB storage layer for hierarchical memory system."""
 
 import json
-import uuid
-from datetime import datetime
 from typing import List, Optional, Dict, Any, Tuple
-
+import duckdb
+from contextlib import contextmanager
 from .db_utils import get_db_connection
 from .models import (
     ConversationNode,
@@ -14,7 +13,7 @@ from .models import (
     NodeType,
     SearchResult,
 )
-
+from .db_utils import _init_schema
 
 class DuckDBStorage:
     """DuckDB storage implementation for conversation nodes."""
@@ -22,13 +21,32 @@ class DuckDBStorage:
     def __init__(self, db_path: str):
         """Initialize storage with database path."""
         self.db_path = db_path
-        # For in-memory databases, we need to initialize schema on every connection
-        self._needs_schema_init = db_path == ":memory:"
+        self._is_memory_db = db_path == ":memory:"
+        self._persistent_conn = None
         
-        # Initialize schema for persistent databases
-        if not self._needs_schema_init:
+        if self._is_memory_db:
+            self._persistent_conn = duckdb.connect(db_path)
+            _init_schema(self._persistent_conn)
+        else:
             with get_db_connection(self.db_path, init_schema=True) as conn:
                 pass  # Schema initialization happens in get_db_connection
+
+    @contextmanager
+    def _get_connection(self):
+        """Get appropriate database connection with proper cleanup."""
+        if self._is_memory_db:
+            # For memory databases, yield the persistent connection
+            yield self._persistent_conn
+        else:
+            # For file databases, use the existing context manager
+            with get_db_connection(self.db_path, init_schema=False) as conn:
+                yield conn
+    
+    def close(self):
+        """Close persistent connection if exists."""
+        if self._persistent_conn:
+            self._persistent_conn.close()
+            self._persistent_conn = None
 
     async def save_conversation_turn(
         self,
@@ -39,15 +57,13 @@ class DuckDBStorage:
         ai_components: Optional[Dict[str, Any]] = None,
     ) -> ConversationTurn:
         """Save a complete conversation turn (user message + AI response)."""
-        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
-            # Get next sequence numbers
+        with self._get_connection() as conn:
             result = conn.execute(
                 "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM nodes WHERE conversation_id = ?",
                 (conversation_id,)
             ).fetchone()
             next_sequence = result[0] if result else 1
 
-            # Save user node
             user_node_result = conn.execute("""
                 INSERT INTO nodes (
                     conversation_id, node_type, content, sequence_number, line_count
@@ -63,7 +79,6 @@ class DuckDBStorage:
 
             user_node_id, timestamp = user_node_result
 
-            # Save AI node
             ai_node_result = conn.execute("""
                 INSERT INTO nodes (
                     conversation_id, node_type, content, sequence_number, line_count,
@@ -82,17 +97,16 @@ class DuckDBStorage:
 
             ai_node_id = ai_node_result[0]
 
-            # Update conversation metadata
             conn.execute("""
                 INSERT INTO conversations (id, total_nodes)
                 VALUES (?, 2)
                 ON CONFLICT (id) DO UPDATE SET
                     total_nodes = total_nodes + 2,
-                    last_updated = CURRENT_TIMESTAMP
+                    last_updated = NOW()
             """, (conversation_id,))
 
             return ConversationTurn(
-                turn_id=user_node_id,  # Use user node ID as turn ID
+                turn_id=user_node_id,
                 conversation_id=conversation_id,
                 user_message=user_message,
                 ai_response=ai_response,
@@ -109,7 +123,7 @@ class DuckDBStorage:
         level: Optional[CompressionLevel] = None
     ) -> List[ConversationNode]:
         """Get conversation nodes, optionally filtered by compression level."""
-        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
+        with self._get_connection() as conn:
             query = """
                 SELECT
                     id, conversation_id, node_type, content, timestamp,
@@ -137,7 +151,7 @@ class DuckDBStorage:
 
     async def get_node(self, node_id: int) -> Optional[ConversationNode]:
         """Get a specific node by ID."""
-        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
+        with self._get_connection() as conn:
             result = conn.execute("""
                 SELECT
                     id, conversation_id, node_type, content, timestamp,
@@ -158,7 +172,7 @@ class DuckDBStorage:
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Compress a node to a summary."""
-        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
+        with self._get_connection() as conn:
             result = conn.execute("""
                 UPDATE nodes
                 SET level = ?, summary = ?, summary_metadata = ?
@@ -192,8 +206,8 @@ class DuckDBStorage:
         limit: int = 10
     ) -> List[SearchResult]:
         """Basic text search across nodes (Phase 1 implementation)."""
-        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
-            # Simple text search for Phase 1
+        with self._get_connection() as conn:
+
             results = conn.execute("""
                 SELECT
                     id, conversation_id, node_type, content, timestamp,
@@ -210,7 +224,7 @@ class DuckDBStorage:
             search_results = []
             for row in results:
                 node = self._row_to_node(row)
-                # Simple relevance scoring
+
                 content_matches = query.lower() in node.content.lower()
                 summary_matches = node.summary and query.lower() in node.summary.lower()
                 
@@ -228,7 +242,7 @@ class DuckDBStorage:
 
     async def conversation_exists(self, conversation_id: str) -> bool:
         """Check if a conversation exists."""
-        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
+        with self._get_connection() as conn:
             result = conn.execute(
                 "SELECT 1 FROM conversations WHERE id = ?",
                 (conversation_id,)
@@ -237,8 +251,8 @@ class DuckDBStorage:
 
     async def get_conversation_stats(self, conversation_id: str) -> Optional[ConversationState]:
         """Get conversation statistics and state."""
-        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
-            # Get basic stats
+        with self._get_connection() as conn:
+
             conv_result = conn.execute("""
                 SELECT total_nodes, compression_stats, current_goal, key_decisions, last_updated
                 FROM conversations
@@ -248,7 +262,7 @@ class DuckDBStorage:
             if not conv_result:
                 return None
 
-            # Get compression level counts
+
             level_counts = {}
             for level in CompressionLevel:
                 count_result = conn.execute(
@@ -281,9 +295,9 @@ class DuckDBStorage:
             summary_metadata=json.loads(row[9]) if row[9] else None,
             parent_summary_id=row[10],
             tokens_used=row[11],
-            expandable=row[13],
-            ai_components=json.loads(row[14]) if row[14] else None,
-            topics=json.loads(row[15]) if row[15] else [],
-            embedding=row[16],
-            relates_to_node_id=row[17]
+            expandable=row[12],
+            ai_components=json.loads(row[13]) if row[13] else None,
+            topics=json.loads(row[14]) if row[14] else [],
+            embedding=row[15],
+            relates_to_node_id=row[16]
         )
