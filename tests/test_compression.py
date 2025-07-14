@@ -118,7 +118,7 @@ def test_identify_nodes_to_compress(compression_manager):
     """Test identifying which nodes should be compressed."""
     # Create a list of nodes
     nodes = []
-    for i in range(8):  # 4 conversation turns = 8 nodes
+    for i in range(4):  # 4 conversation turns = 8 nodes
         # User node
         nodes.append(ConversationNode(
             id=i*2 + 1,

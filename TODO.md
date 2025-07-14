@@ -536,12 +536,12 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 ### Phase 2: MCP Integration
 - [ ] MCP server for memory browsing
 - [ ] read-only tool `expand(idx:int)`: just expanding single nodes
-- [ ] Integration with conversation flow
+- [ ] MCP server+client setup using pydanticAI that integrates the MCP and the middleware
 
 ### Phase 2: Hierarchical Compression
-- [ ] Multi-level hierarchy system
 - [ ] AI summarization of nodes
 - [ ] Automatic compression triggers
+- [ ] Multi-level hierarchy system
 - [ ] New tool `find(text:str)` (regex search across all nodes or from A node to B node)
 - [ ] New tool `show_summaries(start_node:int,end_node:int)`
 

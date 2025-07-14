@@ -22,66 +22,13 @@ class DuckDBStorage:
     def __init__(self, db_path: str):
         """Initialize storage with database path."""
         self.db_path = db_path
-        self._init_schema()
-
-    def _init_schema(self) -> None:
-        """Initialize database schema."""
-        with get_db_connection(self.db_path) as conn:
-            # Create nodes table
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS nodes (
-                    id INTEGER PRIMARY KEY,
-                    conversation_id TEXT NOT NULL,
-                    node_type TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    sequence_number INTEGER NOT NULL,
-                    line_count INTEGER DEFAULT 1,
-
-                    -- Compression fields
-                    level INTEGER DEFAULT 0,
-                    summary TEXT,
-                    summary_metadata JSON,
-                    parent_summary_id INTEGER,
-
-                    -- Tracking fields
-                    tokens_used INTEGER,
-                    expandable BOOLEAN DEFAULT TRUE,
-
-                    -- AI components (for AI nodes)
-                    ai_components JSON,
-
-                    -- Semantic fields
-                    topics JSON,
-                    embedding FLOAT[],
-
-                    -- Relationship fields
-                    relates_to_node_id INTEGER,
-
-                    -- Indexes
-                    FOREIGN KEY (parent_summary_id) REFERENCES nodes(id),
-                    FOREIGN KEY (relates_to_node_id) REFERENCES nodes(id)
-                )
-            """)
-
-            # Create indexes for performance
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_conversation ON nodes(conversation_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_level ON nodes(level)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON nodes(timestamp)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_sequence ON nodes(conversation_id, sequence_number)")
-
-            # Create conversations table for metadata
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id TEXT PRIMARY KEY,
-                    total_nodes INTEGER DEFAULT 0,
-                    compression_stats JSON,
-                    current_goal TEXT,
-                    key_decisions JSON,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+        # For in-memory databases, we need to initialize schema on every connection
+        self._needs_schema_init = db_path == ":memory:"
+        
+        # Initialize schema for persistent databases
+        if not self._needs_schema_init:
+            with get_db_connection(self.db_path, init_schema=True) as conn:
+                pass  # Schema initialization happens in get_db_connection
 
     async def save_conversation_turn(
         self,
@@ -92,7 +39,7 @@ class DuckDBStorage:
         ai_components: Optional[Dict[str, Any]] = None,
     ) -> ConversationTurn:
         """Save a complete conversation turn (user message + AI response)."""
-        with get_db_connection(self.db_path) as conn:
+        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
             # Get next sequence numbers
             result = conn.execute(
                 "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM nodes WHERE conversation_id = ?",
@@ -162,7 +109,7 @@ class DuckDBStorage:
         level: Optional[CompressionLevel] = None
     ) -> List[ConversationNode]:
         """Get conversation nodes, optionally filtered by compression level."""
-        with get_db_connection(self.db_path) as conn:
+        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
             query = """
                 SELECT
                     id, conversation_id, node_type, content, timestamp,
@@ -190,7 +137,7 @@ class DuckDBStorage:
 
     async def get_node(self, node_id: int) -> Optional[ConversationNode]:
         """Get a specific node by ID."""
-        with get_db_connection(self.db_path) as conn:
+        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
             result = conn.execute("""
                 SELECT
                     id, conversation_id, node_type, content, timestamp,
@@ -211,7 +158,7 @@ class DuckDBStorage:
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Compress a node to a summary."""
-        with get_db_connection(self.db_path) as conn:
+        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
             result = conn.execute("""
                 UPDATE nodes
                 SET level = ?, summary = ?, summary_metadata = ?
@@ -245,7 +192,7 @@ class DuckDBStorage:
         limit: int = 10
     ) -> List[SearchResult]:
         """Basic text search across nodes (Phase 1 implementation)."""
-        with get_db_connection(self.db_path) as conn:
+        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
             # Simple text search for Phase 1
             results = conn.execute("""
                 SELECT
@@ -281,7 +228,7 @@ class DuckDBStorage:
 
     async def conversation_exists(self, conversation_id: str) -> bool:
         """Check if a conversation exists."""
-        with get_db_connection(self.db_path) as conn:
+        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
             result = conn.execute(
                 "SELECT 1 FROM conversations WHERE id = ?",
                 (conversation_id,)
@@ -290,7 +237,7 @@ class DuckDBStorage:
 
     async def get_conversation_stats(self, conversation_id: str) -> Optional[ConversationState]:
         """Get conversation statistics and state."""
-        with get_db_connection(self.db_path) as conn:
+        with get_db_connection(self.db_path, init_schema=self._needs_schema_init) as conn:
             # Get basic stats
             conv_result = conn.execute("""
                 SELECT total_nodes, compression_stats, current_goal, key_decisions, last_updated
