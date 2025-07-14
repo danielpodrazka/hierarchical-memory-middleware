@@ -78,8 +78,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv]
-# Configure custom virtual environment path
-virtual-env = "/home/daniel/pp/venvs/llm-memory-middleware"
+
 dev-dependencies = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
