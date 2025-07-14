@@ -13,8 +13,8 @@
 **Current Status**: Phase 1 is complete! Storage layer is optimized and all core functionality is working. Ready to begin Phase 2 (MCP Integration).
 
 **Next Priorities:**
-1. **PydanticAI Integration**: Complete the conversation manager with actual LLM integration
-2. **MCP Server Setup**: Implement read-only memory browsing tools (`expand_node`, `search_memory`)
+1. **PydanticAI Integration**: Complete the conversation manager with actual LLM integration. Use claude-sonnet-4-20250514 as default.
+2. **MCP Server Setup**: Implement read-only memory browsing tool (`expand_node`) using fastmcp. Use web search to look up example implementations. Make sure the server can run in streaming-http transport.
 3. **CLI Testing**: Validate the command-line interface works end-to-end
 4. **Integration Testing**: Create tests that verify the full conversation flow
 
