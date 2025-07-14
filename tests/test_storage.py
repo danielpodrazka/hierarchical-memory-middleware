@@ -26,7 +26,7 @@ async def test_save_conversation_turn(storage):
         conversation_id=conversation_id,
         user_message=user_message,
         ai_response=ai_response,
-        tokens_used=100
+        tokens_used=100,
     )
 
     assert turn.conversation_id == conversation_id
@@ -46,7 +46,7 @@ async def test_get_conversation_nodes(storage):
     await storage.save_conversation_turn(
         conversation_id=conversation_id,
         user_message="What is Python?",
-        ai_response="Python is a programming language."
+        ai_response="Python is a programming language.",
     )
 
     # Get nodes
@@ -63,12 +63,12 @@ async def test_get_conversation_nodes(storage):
 async def test_compress_node(storage):
     """Test node compression."""
     conversation_id = "test-conv-3"
-    
+
     # Save a conversation turn
     turn = await storage.save_conversation_turn(
         conversation_id=conversation_id,
         user_message="Tell me about machine learning algorithms",
-        ai_response="Machine learning algorithms are computational methods that learn from data."
+        ai_response="Machine learning algorithms are computational methods that learn from data.",
     )
 
     # Compress the AI node
@@ -76,7 +76,7 @@ async def test_compress_node(storage):
         node_id=turn.ai_node_id,
         compression_level=CompressionLevel.SUMMARY,
         summary="Brief explanation of machine learning...",
-        metadata={"compression_method": "test"}
+        metadata={"compression_method": "test"},
     )
 
     assert success
@@ -92,18 +92,18 @@ async def test_compress_node(storage):
 async def test_search_nodes(storage):
     """Test basic node searching."""
     conversation_id = "test-conv-4"
-    
+
     # Save multiple conversation turns
     await storage.save_conversation_turn(
         conversation_id=conversation_id,
         user_message="What is Python?",
-        ai_response="Python is a programming language."
+        ai_response="Python is a programming language.",
     )
-    
+
     await storage.save_conversation_turn(
         conversation_id=conversation_id,
         user_message="Tell me about Java",
-        ai_response="Java is also a programming language."
+        ai_response="Java is also a programming language.",
     )
 
     # Search for "Python"
@@ -124,9 +124,7 @@ async def test_conversation_exists(storage):
 
     # Create conversation
     await storage.save_conversation_turn(
-        conversation_id=conversation_id,
-        user_message="Hello",
-        ai_response="Hi there!"
+        conversation_id=conversation_id, user_message="Hello", ai_response="Hi there!"
     )
 
     # Check existing conversation
@@ -144,7 +142,7 @@ async def test_get_recent_nodes(storage):
         await storage.save_conversation_turn(
             conversation_id=conversation_id,
             user_message=f"Message {i}",
-            ai_response=f"Response {i}"
+            ai_response=f"Response {i}",
         )
 
     # Get recent nodes (should be at FULL compression level)
@@ -161,15 +159,13 @@ async def test_get_conversation_stats(storage):
 
     # Save some conversation turns
     await storage.save_conversation_turn(
-        conversation_id=conversation_id,
-        user_message="Hello",
-        ai_response="Hi there!"
+        conversation_id=conversation_id, user_message="Hello", ai_response="Hi there!"
     )
 
     await storage.save_conversation_turn(
         conversation_id=conversation_id,
         user_message="How are you?",
-        ai_response="I'm doing well!"
+        ai_response="I'm doing well!",
     )
 
     # Get stats

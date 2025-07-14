@@ -17,7 +17,7 @@ class SimpleCompressor:
         """Compress a node to its first N words."""
         # Extract first N words
         words = self._extract_words(node.content)
-        truncated_words = words[:self.max_words]
+        truncated_words = words[: self.max_words]
         compressed_content = " ".join(truncated_words)
 
         # Add ellipsis if truncated
@@ -27,11 +27,12 @@ class SimpleCompressor:
         # Calculate compression ratio
         original_length = len(node.content)
         compressed_length = len(compressed_content)
-        compression_ratio = compressed_length / original_length if original_length > 0 else 1.0
+        compression_ratio = (
+            compressed_length / original_length if original_length > 0 else 1.0
+        )
 
         # Extract basic topics (simple keyword extraction)
         topics = self._extract_simple_topics(node.content)
-
 
         return CompressionResult(
             original_node_id=node.id,
@@ -43,8 +44,8 @@ class SimpleCompressor:
                 "compressed_words": len(truncated_words),
                 "truncated": len(words) > self.max_words,
                 "compression_method": "first_n_words",
-                "max_words": self.max_words
-            }
+                "max_words": self.max_words,
+            },
         )
 
     def should_compress(self, node: ConversationNode, conversation_length: int) -> bool:
@@ -60,27 +61,79 @@ class SimpleCompressor:
     def _extract_words(self, text: str) -> List[str]:
         """Extract words from text, handling basic cleanup."""
         # Remove extra whitespace and split by whitespace
-        cleaned = re.sub(r'\s+', ' ', text.strip())
+        cleaned = re.sub(r"\s+", " ", text.strip())
         return cleaned.split() if cleaned else []
 
     def _extract_simple_topics(self, text: str) -> List[str]:
         """Extract simple topics using basic keyword extraction."""
         # For Phase 1: very simple topic extraction
         words = self._extract_words(text.lower())
-        
+
         # Simple keyword filtering
         stopwords = {
-            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-            'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
-            'before', 'after', 'above', 'below', 'between', 'among', 'is', 'are',
-            'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does',
-            'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this',
-            'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they'
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "up",
+            "about",
+            "into",
+            "through",
+            "during",
+            "before",
+            "after",
+            "above",
+            "below",
+            "between",
+            "among",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "can",
+            "this",
+            "that",
+            "these",
+            "those",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
         }
 
         # Extract potential keywords (words longer than 3 chars, not stopwords)
         keywords = [
-            word for word in words
+            word
+            for word in words
             if len(word) > 3 and word not in stopwords and word.isalpha()
         ]
 
@@ -103,8 +156,7 @@ class CompressionManager:
         self.recent_node_limit = recent_node_limit
 
     def identify_nodes_to_compress(
-        self, 
-        nodes: List[ConversationNode]
+        self, nodes: List[ConversationNode]
     ) -> List[ConversationNode]:
         """Identify which nodes should be compressed."""
         # Sort nodes by sequence number
@@ -116,18 +168,14 @@ class CompressionManager:
             return []  # Don't compress anything if under limit
 
         # Compress all but the most recent nodes
-        nodes_to_compress = sorted_nodes[:-self.recent_node_limit]
+        nodes_to_compress = sorted_nodes[: -self.recent_node_limit]
 
         # Only compress nodes that are at FULL level
         return [
-            node for node in nodes_to_compress
-            if node.level == CompressionLevel.FULL
+            node for node in nodes_to_compress if node.level == CompressionLevel.FULL
         ]
 
-    def compress_nodes(
-        self,
-        nodes: List[ConversationNode]
-    ) -> List[CompressionResult]:
+    def compress_nodes(self, nodes: List[ConversationNode]) -> List[CompressionResult]:
         """Compress a list of nodes."""
         results = []
         for node in nodes:

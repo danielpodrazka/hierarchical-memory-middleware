@@ -9,14 +9,16 @@ from pydantic import BaseModel, Field, field_validator
 
 class CompressionLevel(Enum):
     """Compression levels for conversation nodes."""
-    FULL = 0          # Recent nodes - complete content
-    SUMMARY = 1       # Older nodes - 1-sentence summaries
-    META = 2          # Groups of summaries (20-40 nodes each group)
-    ARCHIVE = 3       # Very old - high-level context
+
+    FULL = 0  # Recent nodes - complete content
+    SUMMARY = 1  # Older nodes - 1-sentence summaries
+    META = 2  # Groups of summaries (20-40 nodes each group)
+    ARCHIVE = 3  # Very old - high-level context
 
 
 class NodeType(Enum):
     """Types of conversation nodes."""
+
     USER = "user"
     AI = "ai"
 
@@ -43,7 +45,9 @@ class ConversationNode(BaseModel):
     expandable: bool = True
 
     # For AI nodes: structured breakdown of what it contains
-    ai_components: Optional[Dict[str, Any]] = None  # {"assistant_text": str, "tool_calls": [...], "tool_results": [...], "errors": [...]}
+    ai_components: Optional[Dict[str, Any]] = (
+        None  # {"assistant_text": str, "tool_calls": [...], "tool_results": [...], "errors": [...]}
+    )
 
     # Semantic fields for better retrieval
     topics: List[str] = Field(default_factory=list)
@@ -52,7 +56,7 @@ class ConversationNode(BaseModel):
     # Relationship fields
     relates_to_node_id: Optional[int] = None  # For follow-ups, corrections, etc.
 
-    @field_validator('summary_metadata', 'ai_components', mode='before')
+    @field_validator("summary_metadata", "ai_components", mode="before")
     @classmethod
     def parse_json_fields(cls, v):
         """Parse JSON strings to dictionaries for metadata fields."""
@@ -63,7 +67,7 @@ class ConversationNode(BaseModel):
                 return None
         return v
 
-    @field_validator('topics', mode='before')
+    @field_validator("topics", mode="before")
     @classmethod
     def parse_topics(cls, v):
         """Ensure topics is always a list, parsing from JSON if needed."""

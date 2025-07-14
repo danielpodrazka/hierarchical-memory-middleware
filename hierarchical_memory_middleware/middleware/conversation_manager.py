@@ -5,7 +5,13 @@ import logging
 from typing import Optional, List, Dict, Any
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    UserPromptPart,
+    TextPart,
+)
 
 from ..config import Config
 from ..storage import DuckDBStorage
@@ -30,8 +36,7 @@ class HierarchicalConversationManager:
         # Initialize compression system
         self.compressor = SimpleCompressor(max_words=8)
         self.compression_manager = CompressionManager(
-            compressor=self.compressor,
-            recent_node_limit=config.recent_node_limit
+            compressor=self.compressor, recent_node_limit=config.recent_node_limit
         )
 
         # Initialize PydanticAI agents with history processors
@@ -42,12 +47,16 @@ class HierarchicalConversationManager:
             You have access to conversation memory that allows you to remember previous interactions.
             When you need to reference earlier parts of the conversation, you can do so naturally.
             """,
-            history_processors=[self._hierarchical_memory_processor]
+            history_processors=[self._hierarchical_memory_processor],
         )
 
-        logger.info(f"Initialized HierarchicalConversationManager with model: {config.work_model}")
+        logger.info(
+            f"Initialized HierarchicalConversationManager with model: {config.work_model}"
+        )
 
-    async def _hierarchical_memory_processor(self, messages: List[ModelMessage]) -> List[ModelMessage]:
+    async def _hierarchical_memory_processor(
+        self, messages: List[ModelMessage]
+    ) -> List[ModelMessage]:
         """Process message history using hierarchical memory system."""
         if not self.conversation_id:
             # No conversation started yet, return messages as-is
@@ -57,14 +66,14 @@ class HierarchicalConversationManager:
             # Get recent uncompressed nodes
             recent_nodes = await self.storage.get_recent_nodes(
                 conversation_id=self.conversation_id,
-                limit=self.config.recent_node_limit
+                limit=self.config.recent_node_limit,
             )
 
             # Get some compressed nodes for broader context
             compressed_nodes = await self.storage.get_conversation_nodes(
                 conversation_id=self.conversation_id,
                 limit=10,
-                level=CompressionLevel.SUMMARY
+                level=CompressionLevel.SUMMARY,
             )
 
             # Build message history from hierarchical memory
@@ -73,16 +82,28 @@ class HierarchicalConversationManager:
             # Add compressed context first (older messages)
             for node in compressed_nodes[:5]:  # Limit compressed context
                 if node.node_type == NodeType.USER:
-                    memory_messages.append(ModelRequest(parts=[UserPromptPart(content=node.summary or node.content)]))
+                    memory_messages.append(
+                        ModelRequest(
+                            parts=[UserPromptPart(content=node.summary or node.content)]
+                        )
+                    )
                 elif node.node_type == NodeType.AI:
-                    memory_messages.append(ModelResponse(parts=[TextPart(content=node.summary or node.content)]))
+                    memory_messages.append(
+                        ModelResponse(
+                            parts=[TextPart(content=node.summary or node.content)]
+                        )
+                    )
 
             # Add recent full messages
             for node in recent_nodes[-8:]:  # Last 8 recent nodes
                 if node.node_type == NodeType.USER:
-                    memory_messages.append(ModelRequest(parts=[UserPromptPart(content=node.content)]))
+                    memory_messages.append(
+                        ModelRequest(parts=[UserPromptPart(content=node.content)])
+                    )
                 elif node.node_type == NodeType.AI:
-                    memory_messages.append(ModelResponse(parts=[TextPart(content=node.content)]))
+                    memory_messages.append(
+                        ModelResponse(parts=[TextPart(content=node.content)])
+                    )
 
             # Combine memory with incoming messages, preferring memory over incoming history
             # Keep only the most recent message from incoming if it's new
@@ -106,7 +127,9 @@ class HierarchicalConversationManager:
                 self.conversation_id = conversation_id
                 logger.info(f"Resuming conversation: {conversation_id}")
             else:
-                logger.warning(f"Conversation {conversation_id} not found, creating new one")
+                logger.warning(
+                    f"Conversation {conversation_id} not found, creating new one"
+                )
                 self.conversation_id = str(uuid.uuid4())
         else:
             self.conversation_id = str(uuid.uuid4())
@@ -122,26 +145,28 @@ class HierarchicalConversationManager:
         try:
             # Generate AI response using PydanticAI with history processor
             # The history processor will automatically manage conversation memory
-            response = await self.work_agent.run(
-                user_prompt=user_message
-            )
+            response = await self.work_agent.run(user_prompt=user_message)
 
             # Save the conversation turn
             turn = await self.storage.save_conversation_turn(
                 conversation_id=self.conversation_id,
                 user_message=user_message,
                 ai_response=response.output,
-                tokens_used=getattr(response, 'usage', {}).get('total_tokens') if hasattr(response, 'usage') else None,
+                tokens_used=getattr(response, "usage", {}).get("total_tokens")
+                if hasattr(response, "usage")
+                else None,
                 ai_components={
                     "assistant_text": response.output,
-                    "model_used": self.config.work_model
-                }
+                    "model_used": self.config.work_model,
+                },
             )
 
             # Check if compression is needed
             await self._check_and_compress()
 
-            logger.info(f"Processed conversation turn {turn.turn_id} in conversation {self.conversation_id}")
+            logger.info(
+                f"Processed conversation turn {turn.turn_id} in conversation {self.conversation_id}"
+            )
             return response.output
 
         except Exception as e:
@@ -160,10 +185,16 @@ class HierarchicalConversationManager:
             return {
                 "conversation_id": self.conversation_id,
                 "total_nodes": len(nodes),
-                "recent_nodes": len([n for n in nodes if n.level == CompressionLevel.FULL]),
-                "compressed_nodes": len([n for n in nodes if n.level == CompressionLevel.SUMMARY]),
+                "recent_nodes": len(
+                    [n for n in nodes if n.level == CompressionLevel.FULL]
+                ),
+                "compressed_nodes": len(
+                    [n for n in nodes if n.level == CompressionLevel.SUMMARY]
+                ),
                 "compression_stats": stats.compression_stats if stats else {},
-                "last_updated": stats.last_updated.isoformat() if stats and stats.last_updated else None
+                "last_updated": stats.last_updated.isoformat()
+                if stats and stats.last_updated
+                else None,
             }
 
         except Exception as e:
@@ -177,20 +208,20 @@ class HierarchicalConversationManager:
 
         try:
             results = await self.storage.search_nodes(
-                conversation_id=self.conversation_id,
-                query=query,
-                limit=limit
+                conversation_id=self.conversation_id, query=query, limit=limit
             )
 
             return [
                 {
                     "node_id": result.node.id,
-                    "content": result.node.content[:200] + "..." if len(result.node.content) > 200 else result.node.content,
+                    "content": result.node.content[:200] + "..."
+                    if len(result.node.content) > 200
+                    else result.node.content,
                     "summary": result.node.summary,
                     "relevance_score": result.relevance_score,
                     "match_type": result.match_type,
                     "timestamp": result.node.timestamp.isoformat(),
-                    "node_type": result.node.node_type.value
+                    "node_type": result.node.node_type.value,
                 }
                 for result in results
             ]
@@ -208,7 +239,9 @@ class HierarchicalConversationManager:
             )
 
             # Identify nodes that need compression
-            nodes_to_compress = self.compression_manager.identify_nodes_to_compress(all_nodes)
+            nodes_to_compress = self.compression_manager.identify_nodes_to_compress(
+                all_nodes
+            )
 
             if not nodes_to_compress:
                 return
@@ -216,7 +249,9 @@ class HierarchicalConversationManager:
             logger.info(f"Compressing {len(nodes_to_compress)} nodes")
 
             # Compress the nodes
-            compression_results = self.compression_manager.compress_nodes(nodes_to_compress)
+            compression_results = self.compression_manager.compress_nodes(
+                nodes_to_compress
+            )
 
             # Update nodes in storage
             for result in compression_results:
@@ -224,7 +259,7 @@ class HierarchicalConversationManager:
                     node_id=result.original_node_id,
                     compression_level=CompressionLevel.SUMMARY,
                     summary=result.compressed_content,
-                    metadata=result.metadata
+                    metadata=result.metadata,
                 )
 
             logger.info(f"Successfully compressed {len(compression_results)} nodes")
@@ -251,7 +286,7 @@ class HierarchicalConversationManager:
                 "level": node.level.name,
                 "tokens_used": node.tokens_used,
                 "topics": node.topics,
-                "ai_components": node.ai_components
+                "ai_components": node.ai_components,
             }
 
         except Exception as e:

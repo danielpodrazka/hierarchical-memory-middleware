@@ -14,6 +14,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
 @contextmanager
 def get_db_connection(
     db_path: str,
@@ -77,7 +78,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """Initialize database schema."""
     # Create sequence for node IDs
     conn.execute("CREATE SEQUENCE IF NOT EXISTS nodes_seq")
-    
+
     # Create nodes table
     conn.execute("""
         CREATE TABLE IF NOT EXISTS nodes (
@@ -113,10 +114,14 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """)
 
     # Create indexes for performance
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_conversation ON nodes(conversation_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversation ON nodes(conversation_id)"
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_level ON nodes(level)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON nodes(timestamp)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sequence ON nodes(conversation_id, sequence_number)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sequence ON nodes(conversation_id, sequence_number)"
+    )
 
     # Create conversations table for metadata
     conn.execute("""
@@ -130,5 +135,5 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     logger.debug("Database schema initialized")

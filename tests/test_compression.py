@@ -3,11 +3,14 @@
 import pytest
 from datetime import datetime
 
-from hierarchical_memory_middleware.compression import SimpleCompressor, CompressionManager
+from hierarchical_memory_middleware.compression import (
+    SimpleCompressor,
+    CompressionManager,
+)
 from hierarchical_memory_middleware.models import (
     ConversationNode,
     CompressionLevel,
-    NodeType
+    NodeType,
 )
 
 
@@ -21,7 +24,7 @@ def sample_user_node():
         content="Hello, can you help me understand machine learning algorithms?",
         timestamp=datetime.now(),
         sequence_number=1,
-        line_count=1
+        line_count=1,
     )
 
 
@@ -43,10 +46,7 @@ Each type has specific use cases and approaches to solving problems.""",
         timestamp=datetime.now(),
         sequence_number=2,
         line_count=8,
-        ai_components={
-            "assistant_text": "Detailed explanation...",
-            "tool_calls": []
-        }
+        ai_components={"assistant_text": "Detailed explanation...", "tool_calls": []},
     )
 
 
@@ -74,7 +74,9 @@ def test_compress_long_content(compressor, sample_ai_node):
     # Should truncate to first 8 words
     words = result.compressed_content.replace("...", "").strip().split()
     assert len(words) == 8
-    assert result.compressed_content.startswith("Machine learning algorithms are computational methods that")
+    assert result.compressed_content.startswith(
+        "Machine learning algorithms are computational methods that"
+    )
     assert result.compressed_content.endswith("...")
 
     # Check metadata
@@ -120,25 +122,29 @@ def test_identify_nodes_to_compress(compression_manager):
     nodes = []
     for i in range(4):  # 4 conversation turns = 8 nodes
         # User node
-        nodes.append(ConversationNode(
-            id=i*2 + 1,
-            conversation_id="test",
-            node_type=NodeType.USER,
-            content=f"User message {i}",
-            timestamp=datetime.now(),
-            sequence_number=i*2 + 1,
-            line_count=1
-        ))
+        nodes.append(
+            ConversationNode(
+                id=i * 2 + 1,
+                conversation_id="test",
+                node_type=NodeType.USER,
+                content=f"User message {i}",
+                timestamp=datetime.now(),
+                sequence_number=i * 2 + 1,
+                line_count=1,
+            )
+        )
         # AI node
-        nodes.append(ConversationNode(
-            id=i*2 + 2,
-            conversation_id="test",
-            node_type=NodeType.AI,
-            content=f"AI response {i}",
-            timestamp=datetime.now(),
-            sequence_number=i*2 + 2,
-            line_count=1
-        ))
+        nodes.append(
+            ConversationNode(
+                id=i * 2 + 2,
+                conversation_id="test",
+                node_type=NodeType.AI,
+                content=f"AI response {i}",
+                timestamp=datetime.now(),
+                sequence_number=i * 2 + 2,
+                line_count=1,
+            )
+        )
 
     # With recent_limit=3, should compress 8-3=5 oldest nodes
     nodes_to_compress = compression_manager.identify_nodes_to_compress(nodes)
@@ -159,7 +165,7 @@ def test_identify_nodes_under_limit(compression_manager):
             content="Hello",
             timestamp=datetime.now(),
             sequence_number=1,
-            line_count=1
+            line_count=1,
         ),
         ConversationNode(
             id=2,
@@ -168,8 +174,8 @@ def test_identify_nodes_under_limit(compression_manager):
             content="Hi there",
             timestamp=datetime.now(),
             sequence_number=2,
-            line_count=1
-        )
+            line_count=1,
+        ),
     ]
 
     nodes_to_compress = compression_manager.identify_nodes_to_compress(nodes)
@@ -186,7 +192,7 @@ def test_compress_nodes(compression_manager):
             content="Tell me about machine learning algorithms and their applications",
             timestamp=datetime.now(),
             sequence_number=1,
-            line_count=1
+            line_count=1,
         ),
         ConversationNode(
             id=2,
@@ -195,8 +201,8 @@ def test_compress_nodes(compression_manager):
             content="Machine learning algorithms are computational methods for data analysis",
             timestamp=datetime.now(),
             sequence_number=2,
-            line_count=1
-        )
+            line_count=1,
+        ),
     ]
 
     results = compression_manager.compress_nodes(nodes)
