@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @contextmanager
 def get_db_connection(
-    db_path: str = None,
+    db_path: str,
     max_attempts: int = 300,
     base_delay: float = 0.1,
     max_delay: int = 10,
@@ -24,14 +24,11 @@ def get_db_connection(
     """Create and yield a DuckDB connection, retrying if the database is locked.
 
     Args:
-        db_path: Path to the DuckDB file
+        db_path: Path to the DuckDB file (required)
         max_attempts: Maximum number of connection attempts before giving up
         base_delay: Initial delay between retries in seconds
         max_delay: Maximum delay between retries in seconds
     """
-    if not db_path:
-        db_path = DB_PATH
-
     attempt = 0
 
     while True:
