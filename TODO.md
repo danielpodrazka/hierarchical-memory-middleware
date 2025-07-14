@@ -522,11 +522,16 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 ## Development Phases
 
 ### Phase 1: Core Middleware
+- [x] Configuration system with environment variables ✅
+- [x] Basic package structure and dependencies ✅
+- [x] Test setup with pytest ✅
+- [x] DuckDB connection utilities ✅
+- [ ] Data models (ConversationNode, CompressionLevel, etc.)
+- [ ] DuckDB storage schema and operations
 - [ ] Basic conversation manager with PydanticAI
-- [ ] DuckDB storage implementation
-- [ ] Simple compression (no multi-level hierarchy yet, instead of actual summaries, it just shows the first 8 words of the node)
-- [ ] Basic chat interface
-- [ ] Test setup with pytest
+- [ ] Simple compression (first 8 words truncation)
+- [ ] CLI interface for testing
+- [ ] Integration tests
 
 ### Phase 2: MCP Integration
 - [ ] MCP server for memory browsing

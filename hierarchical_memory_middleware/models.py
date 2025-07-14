@@ -1,0 +1,102 @@
+"""Data models for hierarchical memory system."""
+
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+from enum import Enum
+
+
+class CompressionLevel(Enum):
+    """Compression levels for conversation nodes."""
+    FULL = 0          # Recent nodes - complete content
+    SUMMARY = 1       # Older nodes - 1-sentence summaries
+    META = 2          # Groups of summaries (20-40 nodes each group)
+    ARCHIVE = 3       # Very old - high-level context
+
+
+class NodeType(Enum):
+    """Types of conversation nodes."""
+    USER = "user"
+    AI = "ai"
+
+
+@dataclass
+class ConversationNode:
+    """A single conversation node storing user message and AI response."""
+    
+    id: int
+    conversation_id: str
+    node_type: NodeType
+    content: str  # For USER: the message. For AI: all content combined
+    timestamp: datetime
+    sequence_number: int  # Order within conversation
+    line_count: int  # Number of lines in the full content
+
+    # Compression fields
+    level: CompressionLevel = CompressionLevel.FULL
+    summary: Optional[str] = None
+    summary_metadata: Optional[Dict[str, Any]] = None
+    parent_summary_id: Optional[int] = None
+
+    # Node-specific fields
+    tokens_used: Optional[int] = None
+    expandable: bool = True
+
+    # For AI nodes: structured breakdown of what it contains
+    ai_components: Optional[Dict[str, Any]] = None  # {"assistant_text": str, "tool_calls": [...], "tool_results": [...], "errors": [...]}
+
+    # Semantic fields for better retrieval
+    topics: List[str] = field(default_factory=list)
+    embedding: Optional[List[float]] = None
+
+    # Relationship fields
+    relates_to_node_id: Optional[int] = None  # For follow-ups, corrections, etc.
+
+
+@dataclass
+class ConversationState:
+    """Overall state of a conversation with statistics."""
+    
+    conversation_id: str
+    total_nodes: int
+    compression_stats: Dict[CompressionLevel, int]
+    current_goal: Optional[str] = None
+    key_decisions: List[Dict[str, Any]] = field(default_factory=list)
+    last_updated: Optional[datetime] = None
+
+
+@dataclass
+class ConversationTurn:
+    """A complete turn consisting of user message + AI response."""
+    
+    turn_id: int
+    conversation_id: str
+    user_message: str
+    ai_response: str
+    timestamp: datetime
+    tokens_used: Optional[int] = None
+    
+    # Derived from processing
+    user_node_id: Optional[int] = None
+    ai_node_id: Optional[int] = None
+
+
+@dataclass
+class CompressionResult:
+    """Result of compressing a conversation node."""
+    
+    original_node_id: int
+    compressed_content: str
+    compression_ratio: float
+    topics_extracted: List[str]
+    metadata: Dict[str, Any]
+
+
+@dataclass
+class SearchResult:
+    """Result from searching conversation memory."""
+    
+    node: ConversationNode
+    relevance_score: float
+    match_type: str  # 'content', 'summary', 'topic'
+    matched_text: str
