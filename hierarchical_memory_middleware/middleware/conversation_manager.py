@@ -72,7 +72,7 @@ class HierarchicalConversationManager:
 
             # 2. Generate AI response using PydanticAI
             response = await self.work_agent.run(
-                user_input=user_message,
+                user_prompt=user_message,
                 message_history=context.get("messages", [])
             )
 
@@ -80,10 +80,10 @@ class HierarchicalConversationManager:
             turn = await self.storage.save_conversation_turn(
                 conversation_id=self.conversation_id,
                 user_message=user_message,
-                ai_response=response.data,
+                ai_response=response.output,
                 tokens_used=getattr(response, 'usage', {}).get('total_tokens') if hasattr(response, 'usage') else None,
                 ai_components={
-                    "assistant_text": response.data,
+                    "assistant_text": response.output,
                     "model_used": self.config.work_model
                 }
             )
@@ -92,7 +92,7 @@ class HierarchicalConversationManager:
             await self._check_and_compress()
 
             logger.info(f"Processed conversation turn {turn.turn_id} in conversation {self.conversation_id}")
-            return response.data
+            return response.output
 
         except Exception as e:
             logger.error(f"Error in chat: {str(e)}", exc_info=True)
