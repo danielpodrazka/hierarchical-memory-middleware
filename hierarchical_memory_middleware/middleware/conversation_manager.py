@@ -131,9 +131,13 @@ class HierarchicalConversationManager:
                     f"Conversation {conversation_id} not found, creating new one"
                 )
                 self.conversation_id = str(uuid.uuid4())
+                # Create the conversation entry in the database
+                await self.storage._ensure_conversation_exists(self.conversation_id)
         else:
             self.conversation_id = str(uuid.uuid4())
             logger.info(f"Starting new conversation: {self.conversation_id}")
+            # Create the conversation entry in the database
+            await self.storage._ensure_conversation_exists(self.conversation_id)
 
         return self.conversation_id
 
@@ -147,14 +151,25 @@ class HierarchicalConversationManager:
             # The history processor will automatically manage conversation memory
             response = await self.work_agent.run(user_prompt=user_message)
 
-            # Save the conversation turn
-            turn = await self.storage.save_conversation_turn(
+            # Save the user message as a node
+            user_node = await self.storage.save_conversation_node(
                 conversation_id=self.conversation_id,
-                user_message=user_message,
-                ai_response=response.output,
-                tokens_used=getattr(response, "usage", {}).get("total_tokens")
+                node_type=NodeType.USER,
+                content=user_message,
+            )
+
+            # Save the AI response as a node
+            tokens_used = (
+                getattr(response, "usage", {}).get("total_tokens")
                 if hasattr(response, "usage")
-                else None,
+                else None
+            )
+            
+            ai_node = await self.storage.save_conversation_node(
+                conversation_id=self.conversation_id,
+                node_type=NodeType.AI,
+                content=response.output,
+                tokens_used=tokens_used,
                 ai_components={
                     "assistant_text": response.output,
                     "model_used": self.config.work_model,
@@ -165,7 +180,7 @@ class HierarchicalConversationManager:
             await self._check_and_compress()
 
             logger.info(
-                f"Processed conversation turn {turn.turn_id} in conversation {self.conversation_id}"
+                f"Processed conversation turn (user: {user_node.id}, ai: {ai_node.id}) in conversation {self.conversation_id}"
             )
             return response.output
 

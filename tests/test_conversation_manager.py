@@ -218,7 +218,7 @@ async def test_chat_without_active_conversation(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_chat_successful_response(mock_config, sample_conversation_turn):
+async def test_chat_successful_response(mock_config):
     """Test successful chat interaction."""
     manager = HierarchicalConversationManager(mock_config)
 
@@ -233,17 +233,24 @@ async def test_chat_successful_response(mock_config, sample_conversation_turn):
         mock_response.output = "Hello! I'm doing well, thank you!"
         mock_response.usage = {"total_tokens": 25}
 
+        # Create mock nodes to return
+        mock_user_node = Mock()
+        mock_user_node.id = 1
+        mock_ai_node = Mock()
+        mock_ai_node.id = 2
+
         with (
             patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
             patch.object(
-                manager.storage, "save_conversation_turn", new_callable=AsyncMock
+                manager.storage, "save_conversation_node", new_callable=AsyncMock
             ) as mock_save,
             patch.object(
                 manager, "_check_and_compress", new_callable=AsyncMock
             ) as mock_compress,
         ):
             mock_run.return_value = mock_response
-            mock_save.return_value = sample_conversation_turn
+            # Configure save_conversation_node to return different nodes for user/AI
+            mock_save.side_effect = [mock_user_node, mock_ai_node]
 
             response = await manager.chat("Hello, how are you?")
 
@@ -251,12 +258,21 @@ async def test_chat_successful_response(mock_config, sample_conversation_turn):
 
             mock_run.assert_called_once_with(user_prompt="Hello, how are you?")
 
-            mock_save.assert_called_once()
-            call_args = mock_save.call_args
-            assert call_args[1]["conversation_id"] == "test-conv-1"
-            assert call_args[1]["user_message"] == "Hello, how are you?"
-            assert call_args[1]["ai_response"] == "Hello! I'm doing well, thank you!"
-            assert call_args[1]["tokens_used"] == 25
+            # Should be called twice: once for user node, once for AI node
+            assert mock_save.call_count == 2
+
+            # Check first call (user node)
+            first_call = mock_save.call_args_list[0]
+            assert first_call[1]["conversation_id"] == "test-conv-1"
+            assert first_call[1]["node_type"].value == "user"
+            assert first_call[1]["content"] == "Hello, how are you?"
+
+            # Check second call (AI node)
+            second_call = mock_save.call_args_list[1]
+            assert second_call[1]["conversation_id"] == "test-conv-1"
+            assert second_call[1]["node_type"].value == "ai"
+            assert second_call[1]["content"] == "Hello! I'm doing well, thank you!"
+            assert second_call[1]["tokens_used"] == 25
 
             mock_compress.assert_called_once()
 
@@ -271,7 +287,7 @@ async def test_chat_handles_agent_exceptions(mock_config):
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
         patch.object(
-            manager.storage, "save_conversation_turn", new_callable=AsyncMock
+            manager.storage, "save_conversation_node", new_callable=AsyncMock
         ) as mock_save,
     ):
         mock_run.side_effect = Exception("Agent error")
@@ -285,8 +301,8 @@ async def test_chat_handles_agent_exceptions(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_chat_saves_conversation_turn_correctly(mock_config):
-    """Test that conversation turns are saved with all metadata."""
+async def test_chat_saves_conversation_nodes_correctly(mock_config):
+    """Test that conversation nodes are saved with all metadata."""
     manager = HierarchicalConversationManager(mock_config)
 
     with patch.object(
@@ -304,32 +320,43 @@ async def test_chat_saves_conversation_turn_correctly(mock_config):
             "completion_tokens": 22,
         }
 
-        mock_turn = Mock()
-        mock_turn.turn_id = 1
+        # Create mock nodes to return
+        mock_user_node = Mock()
+        mock_user_node.id = 1
+        mock_ai_node = Mock()
+        mock_ai_node.id = 2
 
         with (
             patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
             patch.object(
-                manager.storage, "save_conversation_turn", new_callable=AsyncMock
+                manager.storage, "save_conversation_node", new_callable=AsyncMock
             ) as mock_save,
             patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
         ):
             mock_run.return_value = mock_response
-            mock_save.return_value = mock_turn
+            mock_save.side_effect = [mock_user_node, mock_ai_node]
 
             await manager.chat("Test message")
 
-            mock_save.assert_called_once()
-            call_args = mock_save.call_args
+            # Should be called twice: once for user node, once for AI node
+            assert mock_save.call_count == 2
 
-            assert call_args[1]["conversation_id"] == "test-conv-1"
-            assert call_args[1]["user_message"] == "Test message"
-            assert call_args[1]["ai_response"] == "This is my response"
-            assert call_args[1]["tokens_used"] == 42
+            # Check first call (user node)
+            first_call = mock_save.call_args_list[0]
+            assert first_call[1]["conversation_id"] == "test-conv-1"
+            assert first_call[1]["node_type"].value == "user"
+            assert first_call[1]["content"] == "Test message"
+
+            # Check second call (AI node)
+            second_call = mock_save.call_args_list[1]
+            assert second_call[1]["conversation_id"] == "test-conv-1"
+            assert second_call[1]["node_type"].value == "ai"
+            assert second_call[1]["content"] == "This is my response"
+            assert second_call[1]["tokens_used"] == 42
             assert (
-                call_args[1]["ai_components"]["assistant_text"] == "This is my response"
+                second_call[1]["ai_components"]["assistant_text"] == "This is my response"
             )
-            assert call_args[1]["ai_components"]["model_used"] == "test"
+            assert second_call[1]["ai_components"]["model_used"] == "test"
 
 
 @pytest.mark.asyncio
@@ -342,20 +369,23 @@ async def test_chat_triggers_compression_check(mock_config):
     mock_response = Mock()
     mock_response.output = "Response"
 
-    mock_turn = Mock()
-    mock_turn.turn_id = 1
+    # Create mock nodes to return
+    mock_user_node = Mock()
+    mock_user_node.id = 1
+    mock_ai_node = Mock()
+    mock_ai_node.id = 2
 
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
         patch.object(
-            manager.storage, "save_conversation_turn", new_callable=AsyncMock
+            manager.storage, "save_conversation_node", new_callable=AsyncMock
         ) as mock_save,
         patch.object(
             manager, "_check_and_compress", new_callable=AsyncMock
         ) as mock_compress,
     ):
         mock_run.return_value = mock_response
-        mock_save.return_value = mock_turn
+        mock_save.side_effect = [mock_user_node, mock_ai_node]
 
         await manager.chat("Test")
 
@@ -982,9 +1012,15 @@ async def test_conversation_with_compression_cycle(mock_config):
     mock_response = Mock()
     mock_response.output = "Response"
 
+    # Create mock nodes to return
+    mock_user_node = Mock()
+    mock_user_node.id = 1
+    mock_ai_node = Mock()
+    mock_ai_node.id = 2
+
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
-        patch.object(manager.storage, "save_conversation_turn", new_callable=AsyncMock),
+        patch.object(manager.storage, "save_conversation_node", new_callable=AsyncMock) as mock_save,
         patch.object(
             manager.storage, "conversation_exists", new_callable=AsyncMock
         ) as mock_exists,
@@ -994,6 +1030,7 @@ async def test_conversation_with_compression_cycle(mock_config):
     ):
         mock_exists.return_value = True
         mock_run.return_value = mock_response
+        mock_save.side_effect = [mock_user_node, mock_ai_node] * 3  # 3 iterations, 2 nodes each
 
         for i in range(3):
             await manager.chat(f"Message {i}")
@@ -1075,14 +1112,21 @@ async def test_chat_with_empty_message(mock_config):
         mock_response = Mock()
         mock_response.output = "I received an empty message"
 
+        # Create mock nodes to return
+        mock_user_node = Mock()
+        mock_user_node.id = 1
+        mock_ai_node = Mock()
+        mock_ai_node.id = 2
+
         with (
             patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
             patch.object(
-                manager.storage, "save_conversation_turn", new_callable=AsyncMock
-            ),
+                manager.storage, "save_conversation_node", new_callable=AsyncMock
+            ) as mock_save,
             patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
         ):
             mock_run.return_value = mock_response
+            mock_save.side_effect = [mock_user_node, mock_ai_node] * 2  # 2 calls, 2 nodes each
 
             response = await manager.chat("")
             assert "I received an empty message" == response
@@ -1154,22 +1198,25 @@ async def test_conversation_manager_logging(mock_config, caplog):
 
     mock_response = Mock()
     mock_response.output = "Response"
-    mock_turn = Mock()
-    mock_turn.turn_id = 1
+    # Create mock nodes to return
+    mock_user_node = Mock()
+    mock_user_node.id = 1
+    mock_ai_node = Mock()
+    mock_ai_node.id = 2
 
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
         patch.object(
-            manager.storage, "save_conversation_turn", new_callable=AsyncMock
+            manager.storage, "save_conversation_node", new_callable=AsyncMock
         ) as mock_save,
         patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
     ):
         mock_run.return_value = mock_response
-        mock_save.return_value = mock_turn
+        mock_save.side_effect = [mock_user_node, mock_ai_node]
 
         await manager.chat("Test message")
 
-        assert f"Processed conversation turn 1 in conversation {conv_id}" in caplog.text
+        assert f"Processed conversation turn (user: 1, ai: 2) in conversation {conv_id}" in caplog.text
 
     with patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run:
         mock_run.side_effect = Exception("Test error")

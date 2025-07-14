@@ -99,6 +99,97 @@ class DuckDBStorage:
 
             return self._row_to_single_node(result)
 
+    async def save_conversation_node(
+        self,
+        conversation_id: str,
+        node_type: NodeType,
+        content: str,
+        tokens_used: Optional[int] = None,
+        ai_components: Optional[Dict[str, Any]] = None,
+        topics: Optional[List[str]] = None,
+        relates_to_node_id: Optional[int] = None,
+    ) -> ConversationNode:
+        """Save a conversation node and return the created node."""
+        import json
+        from datetime import datetime
+
+        # Ensure conversation exists
+        await self._ensure_conversation_exists(conversation_id)
+
+        with self._get_connection() as conn:
+            # Get the next sequence number for this conversation
+            seq_result = conn.execute(
+                "SELECT COALESCE(MAX(sequence_number), -1) + 1 FROM nodes WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            sequence_number = seq_result[0] if seq_result else 0
+
+            # Calculate line count
+            line_count = len(content.split('\n'))
+
+            # Insert the new node
+            result = conn.execute(
+                """
+                INSERT INTO nodes (
+                    conversation_id, node_type, content, timestamp, sequence_number,
+                    line_count, level, tokens_used, ai_components, topics, relates_to_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    conversation_id,
+                    node_type.value,
+                    content,
+                    datetime.now(),
+                    sequence_number,
+                    line_count,
+                    CompressionLevel.FULL.value,
+                    tokens_used,
+                    json.dumps(ai_components) if ai_components else None,
+                    json.dumps(topics) if topics else None,
+                    relates_to_node_id,
+                ),
+            )
+
+            node_id = result.fetchone()[0]
+
+            # Update conversation stats
+            conn.execute(
+                """
+                UPDATE conversations
+                SET total_nodes = total_nodes + 1, last_updated = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (conversation_id,),
+            )
+
+            # Fetch and return the created node
+            node_result = conn.execute(
+                """
+                SELECT
+                    id, conversation_id, node_type, content, timestamp,
+                    sequence_number, line_count, level, summary, summary_metadata,
+                    parent_summary_id, tokens_used, expandable,
+                    ai_components, topics, embedding, relates_to_node_id
+                FROM nodes
+                WHERE id = ?
+                """,
+                (node_id,),
+            )
+
+            return self._row_to_single_node(node_result)
+
+    async def _ensure_conversation_exists(self, conversation_id: str) -> None:
+        """Ensure a conversation exists in the conversations table."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO conversations (id, total_nodes, compression_stats)
+                VALUES (?, 0, '{}')
+                """,
+                (conversation_id,),
+            )
+
     async def compress_node(
         self,
         node_id: int,

@@ -41,25 +41,44 @@ async def sample_nodes(mcp_server):
     conversation_id = mcp_server.conversation_manager.conversation_id
 
     # Create sample nodes
-    turn1 = await storage.save_conversation_turn(
+    # First conversation turn
+    user1 = await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message="Hello, can you help me with Python?",
-        ai_response="Of course! I'd be happy to help you with Python. What specific topic would you like to learn about?",
-        tokens_used=50
+        node_type=NodeType.USER,
+        content="Hello, can you help me with Python?",
     )
 
-    turn2 = await storage.save_conversation_turn(
+    ai1 = await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message="How do I create a list comprehension?",
-        ai_response="List comprehensions are a concise way to create lists in Python. The syntax is [expression for item in iterable if condition]. For example: [x**2 for x in range(10) if x % 2 == 0] creates a list of squares of even numbers from 0 to 8.",
-        tokens_used=75
+        node_type=NodeType.AI,
+        content="Of course! I'd be happy to help you with Python. What specific topic would you like to learn about?",
+        tokens_used=50,
+        ai_components={
+            "assistant_text": "Of course! I'd be happy to help you with Python. What specific topic would you like to learn about?",
+            "model_used": "test-model",
+        },
     )
 
-    # Get the actual node objects from storage
-    all_nodes = await storage.get_conversation_nodes(conversation_id)
-    
+    # Second conversation turn
+    user2 = await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="How do I create a list comprehension?",
+    )
+
+    ai2 = await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="List comprehensions are a concise way to create lists in Python. The syntax is [expression for item in iterable if condition]. For example: [x**2 for x in range(10) if x % 2 == 0] creates a list of squares of even numbers from 0 to 8.",
+        tokens_used=75,
+        ai_components={
+            "assistant_text": "List comprehensions are a concise way to create lists in Python. The syntax is [expression for item in iterable if condition]. For example: [x**2 for x in range(10) if x % 2 == 0] creates a list of squares of even numbers from 0 to 8.",
+            "model_used": "test-model",
+        },
+    )
+
     # Return nodes in order: user1, ai1, user2, ai2
-    return all_nodes
+    return [user1, ai1, user2, ai2]
 
 
 class TestMemoryMCPServer:
@@ -247,15 +266,21 @@ class TestMCPServerIntegration:
         assert conversation_id is not None
 
         # Add some data
-        turn = await server.storage.save_conversation_turn(
+        user_node = await server.storage.save_conversation_node(
             conversation_id=conversation_id,
-            user_message="Test message",
-            ai_response="Test response",
-            tokens_used=25
+            node_type=NodeType.USER,
+            content="Test message",
         )
-        
+
+        ai_node = await server.storage.save_conversation_node(
+            conversation_id=conversation_id,
+            node_type=NodeType.AI,
+            content="Test response",
+            tokens_used=25,
+        )
+
         # Test node expansion
-        node_details = await server.conversation_manager.get_node_details(turn.user_node.id)
+        node_details = await server.conversation_manager.get_node_details(user_node.id)
         assert node_details is not None
         assert "Test message" in node_details["content"]
         

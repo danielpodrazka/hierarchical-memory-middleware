@@ -16,25 +16,47 @@ def storage():
 
 
 @pytest.mark.asyncio
-async def test_save_conversation_turn(storage):
-    """Test saving a conversation turn."""
+async def test_save_conversation_node(storage):
+    """Test saving conversation nodes."""
     conversation_id = "test-conv-1"
     user_message = "Hello, how are you?"
     ai_response = "I'm doing well, thank you for asking!"
 
-    turn = await storage.save_conversation_turn(
+    # Save user node
+    user_node = await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message=user_message,
-        ai_response=ai_response,
-        tokens_used=100,
+        node_type=NodeType.USER,
+        content=user_message,
     )
 
-    assert turn.conversation_id == conversation_id
-    assert turn.user_message == user_message
-    assert turn.ai_response == ai_response
-    assert turn.tokens_used == 100
-    assert turn.user_node_id is not None
-    assert turn.ai_node_id is not None
+    # Save AI node
+    ai_node = await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content=ai_response,
+        tokens_used=100,
+        ai_components={
+            "assistant_text": ai_response,
+            "model_used": "test-model",
+        },
+    )
+
+    # Test user node
+    assert user_node.conversation_id == conversation_id
+    assert user_node.content == user_message
+    assert user_node.node_type == NodeType.USER
+    assert user_node.sequence_number == 0
+    assert user_node.id is not None
+
+    # Test AI node
+    assert ai_node.conversation_id == conversation_id
+    assert ai_node.content == ai_response
+    assert ai_node.node_type == NodeType.AI
+    assert ai_node.sequence_number == 1
+    assert ai_node.tokens_used == 100
+    assert ai_node.ai_components["assistant_text"] == ai_response
+    assert ai_node.ai_components["model_used"] == "test-model"
+    assert ai_node.id is not None
 
 
 @pytest.mark.asyncio
@@ -42,11 +64,17 @@ async def test_get_conversation_nodes(storage):
     """Test retrieving conversation nodes."""
     conversation_id = "test-conv-2"
 
-    # Save a conversation turn
-    await storage.save_conversation_turn(
+    # Save conversation nodes
+    await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message="What is Python?",
-        ai_response="Python is a programming language.",
+        node_type=NodeType.USER,
+        content="What is Python?",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="Python is a programming language.",
     )
 
     # Get nodes
@@ -64,16 +92,22 @@ async def test_compress_node(storage):
     """Test node compression."""
     conversation_id = "test-conv-3"
 
-    # Save a conversation turn
-    turn = await storage.save_conversation_turn(
+    # Save conversation nodes
+    await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message="Tell me about machine learning algorithms",
-        ai_response="Machine learning algorithms are computational methods that learn from data.",
+        node_type=NodeType.USER,
+        content="Tell me about machine learning algorithms",
+    )
+
+    ai_node = await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="Machine learning algorithms are computational methods that learn from data.",
     )
 
     # Compress the AI node
     success = await storage.compress_node(
-        node_id=turn.ai_node_id,
+        node_id=ai_node.id,
         compression_level=CompressionLevel.SUMMARY,
         summary="Brief explanation of machine learning...",
         metadata={"compression_method": "test"},
@@ -82,7 +116,7 @@ async def test_compress_node(storage):
     assert success
 
     # Verify compression
-    node = await storage.get_node(turn.ai_node_id)
+    node = await storage.get_node(ai_node.id)
     assert node.level == CompressionLevel.SUMMARY
     assert node.summary == "Brief explanation of machine learning..."
     assert node.summary_metadata["compression_method"] == "test"
@@ -93,17 +127,29 @@ async def test_search_nodes(storage):
     """Test basic node searching."""
     conversation_id = "test-conv-4"
 
-    # Save multiple conversation turns
-    await storage.save_conversation_turn(
+    # Save multiple conversation nodes
+    await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message="What is Python?",
-        ai_response="Python is a programming language.",
+        node_type=NodeType.USER,
+        content="What is Python?",
     )
 
-    await storage.save_conversation_turn(
+    await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message="Tell me about Java",
-        ai_response="Java is also a programming language.",
+        node_type=NodeType.AI,
+        content="Python is a programming language.",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="Tell me about Java",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="Java is also a programming language.",
     )
 
     # Search for "Python"
@@ -123,8 +169,16 @@ async def test_conversation_exists(storage):
     assert not exists
 
     # Create conversation
-    await storage.save_conversation_turn(
-        conversation_id=conversation_id, user_message="Hello", ai_response="Hi there!"
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="Hello",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="Hi there!",
     )
 
     # Check existing conversation
@@ -139,16 +193,22 @@ async def test_get_recent_nodes(storage):
 
     # Create multiple turns
     for i in range(5):
-        await storage.save_conversation_turn(
+        await storage.save_conversation_node(
             conversation_id=conversation_id,
-            user_message=f"Message {i}",
-            ai_response=f"Response {i}",
+            node_type=NodeType.USER,
+            content=f"Message {i}",
+        )
+
+        await storage.save_conversation_node(
+            conversation_id=conversation_id,
+            node_type=NodeType.AI,
+            content=f"Response {i}",
         )
 
     # Get recent nodes (should be at FULL compression level)
     recent_nodes = await storage.get_recent_nodes(conversation_id, limit=6)
 
-    assert len(recent_nodes) == 6  # 3 turns * 2 nodes each
+    assert len(recent_nodes) == 6  # Limited to 6 nodes
     assert all(node.level == CompressionLevel.FULL for node in recent_nodes)
 
 
@@ -157,15 +217,29 @@ async def test_get_conversation_stats(storage):
     """Test getting conversation statistics."""
     conversation_id = "test-conv-7"
 
-    # Save some conversation turns
-    await storage.save_conversation_turn(
-        conversation_id=conversation_id, user_message="Hello", ai_response="Hi there!"
+    # Save some conversation nodes
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="Hello",
     )
 
-    await storage.save_conversation_turn(
+    await storage.save_conversation_node(
         conversation_id=conversation_id,
-        user_message="How are you?",
-        ai_response="I'm doing well!",
+        node_type=NodeType.AI,
+        content="Hi there!",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="How are you?",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="I'm doing well!",
     )
 
     # Get stats
