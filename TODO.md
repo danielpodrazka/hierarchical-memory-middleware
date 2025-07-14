@@ -394,11 +394,6 @@ class Config:
     meta_summary_threshold: int = 50
     archive_threshold: int = 200
     
-    # Context optimization
-    max_context_tokens: int = 30000
-    use_smart_context: bool = True
-    include_importance_boost: float = 2.0
-    
     # Storage
     db_path: str = "./conversations.db"
     backup_interval_hours: int = 24
@@ -529,20 +524,21 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 ### Phase 1: Core Middleware
 - [ ] Basic conversation manager with PydanticAI
 - [ ] DuckDB storage implementation
-- [ ] Simple compression (no hierarchy yet)
+- [ ] Simple compression (no multi-level hierarchy yet, instead of actual summaries, it just shows the first 8 words of the node)
 - [ ] Basic chat interface
+- [ ] Test setup with pytest
+
+### Phase 2: MCP Integration
+- [ ] MCP server for memory browsing
+- [ ] read-only tool `expand(idx:int)`: just expanding single nodes
+- [ ] Integration with conversation flow
 
 ### Phase 2: Hierarchical Compression
-- [ ] Multi-level compression system
-- [ ] Smart summarization with importance scoring
-- [ ] Context optimization algorithm
+- [ ] Multi-level hierarchy system
+- [ ] AI summarization of nodes
 - [ ] Automatic compression triggers
-
-### Phase 3: MCP Integration
-- [ ] MCP server for memory browsing
-- [ ] Read-only tools (expand, search, browse)
-- [ ] Integration with conversation flow
-- [ ] Testing with Claude Desktop
+- [ ] New tool `find(text:str)` (regex search across all nodes or from A node to B node)
+- [ ] New tool `show_summaries(start_node:int,end_node:int)`
 
 ### Phase 4: Advanced Features
 - [ ] Semantic search with embeddings
