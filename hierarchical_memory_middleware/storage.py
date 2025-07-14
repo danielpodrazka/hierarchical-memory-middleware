@@ -145,9 +145,9 @@ class DuckDBStorage:
                 query += " LIMIT ?"
                 params.append(limit)
 
-            results = conn.execute(query, params).fetchall()
+            result = conn.execute(query, params)
 
-            return [self._row_to_node(row) for row in results]
+            return self._rows_to_nodes(result)
 
     async def get_node(self, node_id: int) -> Optional[ConversationNode]:
         """Get a specific node by ID."""
@@ -160,9 +160,9 @@ class DuckDBStorage:
                     ai_components, topics, embedding, relates_to_node_id
                 FROM nodes
                 WHERE id = ?
-            """, (node_id,)).fetchone()
+            """, (node_id,))
 
-            return self._row_to_node(result) if result else None
+            return self._row_to_single_node(result)
 
     async def compress_node(
         self,
@@ -208,7 +208,7 @@ class DuckDBStorage:
         """Basic text search across nodes (Phase 1 implementation)."""
         with self._get_connection() as conn:
 
-            results = conn.execute("""
+            result = conn.execute("""
                 SELECT
                     id, conversation_id, node_type, content, timestamp,
                     sequence_number, line_count, level, summary, summary_metadata,
@@ -219,11 +219,11 @@ class DuckDBStorage:
                     AND (content ILIKE ? OR summary ILIKE ?)
                 ORDER BY sequence_number DESC
                 LIMIT ?
-            """, (conversation_id, f"%{query}%", f"%{query}%", limit)).fetchall()
+            """, (conversation_id, f"%{query}%", f"%{query}%", limit))
 
+            nodes = self._rows_to_nodes(result)
             search_results = []
-            for row in results:
-                node = self._row_to_node(row)
+            for node in nodes:
 
                 content_matches = query.lower() in node.content.lower()
                 summary_matches = node.summary and query.lower() in node.summary.lower()
@@ -280,24 +280,13 @@ class DuckDBStorage:
                 last_updated=conv_result[4]
             )
 
-    def _row_to_node(self, row: tuple) -> ConversationNode:
-        """Convert database row to ConversationNode."""
-        return ConversationNode(
-            id=row[0],
-            conversation_id=row[1],
-            node_type=NodeType(row[2]),
-            content=row[3],
-            timestamp=row[4],
-            sequence_number=row[5],
-            line_count=row[6],
-            level=CompressionLevel(row[7]),
-            summary=row[8],
-            summary_metadata=json.loads(row[9]) if row[9] else None,
-            parent_summary_id=row[10],
-            tokens_used=row[11],
-            expandable=row[12],
-            ai_components=json.loads(row[13]) if row[13] else None,
-            topics=json.loads(row[14]) if row[14] else [],
-            embedding=row[15],
-            relates_to_node_id=row[16]
-        )
+    def _rows_to_nodes(self, result) -> List[ConversationNode]:
+        """Convert DuckDB result to ConversationNode objects using PyArrow."""
+        arrow_table = result.arrow()
+        return [ConversationNode.model_validate(row) for row in arrow_table.to_pylist()]
+
+    def _row_to_single_node(self, result) -> Optional[ConversationNode]:
+        """Convert a single DuckDB result row to ConversationNode using PyArrow."""
+        arrow_table = result.arrow()
+        rows = arrow_table.to_pylist()
+        return ConversationNode.model_validate(rows[0]) if rows else None

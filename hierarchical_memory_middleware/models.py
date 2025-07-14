@@ -1,9 +1,10 @@
 """Data models for hierarchical memory system."""
 
-from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+import json
+from pydantic import BaseModel, Field, field_validator
 
 
 class CompressionLevel(Enum):
@@ -20,10 +21,9 @@ class NodeType(Enum):
     AI = "ai"
 
 
-@dataclass
-class ConversationNode:
+class ConversationNode(BaseModel):
     """A single conversation node storing user message and AI response."""
-    
+
     id: int
     conversation_id: str
     node_type: NodeType
@@ -46,45 +46,66 @@ class ConversationNode:
     ai_components: Optional[Dict[str, Any]] = None  # {"assistant_text": str, "tool_calls": [...], "tool_results": [...], "errors": [...]}
 
     # Semantic fields for better retrieval
-    topics: List[str] = field(default_factory=list)
+    topics: List[str] = Field(default_factory=list)
     embedding: Optional[List[float]] = None
 
     # Relationship fields
     relates_to_node_id: Optional[int] = None  # For follow-ups, corrections, etc.
 
+    @field_validator('summary_metadata', 'ai_components', mode='before')
+    @classmethod
+    def parse_json_fields(cls, v):
+        """Parse JSON strings to dictionaries for metadata fields."""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return None
+        return v
 
-@dataclass
-class ConversationState:
+    @field_validator('topics', mode='before')
+    @classmethod
+    def parse_topics(cls, v):
+        """Ensure topics is always a list, parsing from JSON if needed."""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return []
+        return v
+
+
+class ConversationState(BaseModel):
     """Overall state of a conversation with statistics."""
-    
+
     conversation_id: str
     total_nodes: int
     compression_stats: Dict[CompressionLevel, int]
     current_goal: Optional[str] = None
-    key_decisions: List[Dict[str, Any]] = field(default_factory=list)
+    key_decisions: List[Dict[str, Any]] = Field(default_factory=list)
     last_updated: Optional[datetime] = None
 
 
-@dataclass
-class ConversationTurn:
+class ConversationTurn(BaseModel):
     """A complete turn consisting of user message + AI response."""
-    
+
     turn_id: int
     conversation_id: str
     user_message: str
     ai_response: str
     timestamp: datetime
     tokens_used: Optional[int] = None
-    
+
     # Derived from processing
     user_node_id: Optional[int] = None
     ai_node_id: Optional[int] = None
 
 
-@dataclass
-class CompressionResult:
+class CompressionResult(BaseModel):
     """Result of compressing a conversation node."""
-    
+
     original_node_id: int
     compressed_content: str
     compression_ratio: float
@@ -92,10 +113,9 @@ class CompressionResult:
     metadata: Dict[str, Any]
 
 
-@dataclass
-class SearchResult:
+class SearchResult(BaseModel):
     """Result from searching conversation memory."""
-    
+
     node: ConversationNode
     relevance_score: float
     match_type: str  # 'content', 'summary', 'topic'
