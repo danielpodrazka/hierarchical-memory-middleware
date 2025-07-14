@@ -41,33 +41,35 @@ class MemoryMCPServer:
         """Register all MCP tools."""
 
         @self.mcp.tool()
-        async def expand_node(node_id: int) -> Dict[str, Any]:
-            """Retrieve full content of a conversation node by ID.
+        async def expand_node(node_id: int, conversation_id: str) -> Dict[str, Any]:
+            """Retrieve full content of a conversation node by composite ID.
 
             This tool allows expanding compressed/summarized nodes to see their
             full original content, including all details that may have been
             compressed away in the hierarchical memory system.
 
             Args:
-                node_id: The unique identifier of the node to expand
+                node_id: The node identifier within the conversation
+                conversation_id: The conversation identifier
 
             Returns:
                 Dictionary containing the full node details including content,
                 metadata, timestamps, and any AI components if it's an AI node.
             """
             try:
-                logger.info(f"Expanding node {node_id}")
-                result = await self.conversation_manager.get_node_details(node_id)
+                logger.info(f"Expanding node {node_id} in conversation {conversation_id}")
+                result = await self.conversation_manager.get_node_details(node_id, conversation_id)
 
                 if result is None:
                     return {
-                        "error": f"Node {node_id} not found",
-                        "node_id": node_id
+                        "error": f"Node {node_id} not found in conversation {conversation_id}",
+                        "node_id": node_id,
+                        "conversation_id": conversation_id
                     }
 
                 return {
                     "success": True,
-                    "node_id": result["id"],
+                    "node_id": result["node_id"],
                     "conversation_id": result["conversation_id"],
                     "node_type": result["node_type"],
                     "content": result["content"],
@@ -82,10 +84,11 @@ class MemoryMCPServer:
                 }
 
             except Exception as e:
-                logger.error(f"Error expanding node {node_id}: {str(e)}", exc_info=True)
+                logger.error(f"Error expanding node {node_id} in conversation {conversation_id}: {str(e)}", exc_info=True)
                 return {
-                    "error": f"Failed to expand node {node_id}: {str(e)}",
-                    "node_id": node_id
+                    "error": f"Failed to expand node {node_id} in conversation {conversation_id}: {str(e)}",
+                    "node_id": node_id,
+                    "conversation_id": conversation_id
                 }
 
         @self.mcp.tool()
@@ -180,7 +183,8 @@ class MemoryMCPServer:
                 nodes_data = []
                 for node in recent_nodes:
                     nodes_data.append({
-                        "id": node.id,
+                        "node_id": node.node_id,
+                        "conversation_id": node.conversation_id,
                         "node_type": node.node_type.value,
                         "content": node.content[:200] + "..." if len(node.content) > 200 else node.content,
                         "summary": node.summary,

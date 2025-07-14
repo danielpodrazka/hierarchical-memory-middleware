@@ -37,7 +37,6 @@ class ChatTester:
         # Create config (load from .env file, then override test-specific settings)
         self.config = Config.from_env()
         # Override specific settings for test environment
-        self.config.db_path = "./test_chat.db"  # Local file for persistence
         self.config.recent_node_limit = 5
         self.config.summary_threshold = 20
 

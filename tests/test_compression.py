@@ -18,7 +18,7 @@ from hierarchical_memory_middleware.models import (
 def sample_user_node():
     """Create a sample user node for testing."""
     return ConversationNode(
-        id=1,
+        node_id=1,
         conversation_id="test-conv",
         node_type=NodeType.USER,
         content="Hello, can you help me understand machine learning algorithms?",
@@ -32,7 +32,7 @@ def sample_user_node():
 def sample_ai_node():
     """Create a sample AI node for testing."""
     return ConversationNode(
-        id=2,
+        node_id=2,
         conversation_id="test-conv",
         node_type=NodeType.AI,
         content="""Machine learning algorithms are computational methods that enable computers to learn from data without being explicitly programmed.
@@ -60,7 +60,7 @@ def test_compress_short_content(compressor, sample_user_node):
     """Test compression of short content."""
     result = compressor.compress_node(sample_user_node)
 
-    assert result.original_node_id == sample_user_node.id
+    assert result.original_node_id == sample_user_node.node_id
     assert "Hello, can you help me understand" in result.compressed_content
     assert result.compressed_content.endswith("...")
     assert result.compression_ratio < 1.0
@@ -124,7 +124,7 @@ def test_identify_nodes_to_compress(compression_manager):
         # User node
         nodes.append(
             ConversationNode(
-                id=i * 2 + 1,
+                node_id=i * 2 + 1,
                 conversation_id="test",
                 node_type=NodeType.USER,
                 content=f"User message {i}",
@@ -136,7 +136,7 @@ def test_identify_nodes_to_compress(compression_manager):
         # AI node
         nodes.append(
             ConversationNode(
-                id=i * 2 + 2,
+                node_id=i * 2 + 2,
                 conversation_id="test",
                 node_type=NodeType.AI,
                 content=f"AI response {i}",
@@ -159,7 +159,7 @@ def test_identify_nodes_under_limit(compression_manager):
     # Create only 2 nodes (under the limit of 3)
     nodes = [
         ConversationNode(
-            id=1,
+            node_id=1,
             conversation_id="test",
             node_type=NodeType.USER,
             content="Hello",
@@ -168,7 +168,7 @@ def test_identify_nodes_under_limit(compression_manager):
             line_count=1,
         ),
         ConversationNode(
-            id=2,
+            node_id=2,
             conversation_id="test",
             node_type=NodeType.AI,
             content="Hi there",
@@ -186,7 +186,7 @@ def test_compress_nodes(compression_manager):
     """Test compressing a list of nodes."""
     nodes = [
         ConversationNode(
-            id=1,
+            node_id=1,
             conversation_id="test",
             node_type=NodeType.USER,
             content="Tell me about machine learning algorithms and their applications",
@@ -195,7 +195,7 @@ def test_compress_nodes(compression_manager):
             line_count=1,
         ),
         ConversationNode(
-            id=2,
+            node_id=2,
             conversation_id="test",
             node_type=NodeType.AI,
             content="Machine learning algorithms are computational methods for data analysis",

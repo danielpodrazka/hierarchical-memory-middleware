@@ -35,7 +35,7 @@ class SimpleCompressor:
         topics = self._extract_simple_topics(node.content)
 
         return CompressionResult(
-            original_node_id=node.id,
+            original_node_id=node.node_id,
             compressed_content=compressed_content,
             compression_ratio=compression_ratio,
             topics_extracted=topics,

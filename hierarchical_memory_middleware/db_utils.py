@@ -76,13 +76,10 @@ def get_db_connection(
 
 def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """Initialize database schema."""
-    # Create sequence for node IDs
-    conn.execute("CREATE SEQUENCE IF NOT EXISTS nodes_seq")
-
-    # Create nodes table
+    # Create nodes table with composite primary key
     conn.execute("""
         CREATE TABLE IF NOT EXISTS nodes (
-            id INTEGER PRIMARY KEY DEFAULT nextval('nodes_seq'),
+            node_id INTEGER NOT NULL,
             conversation_id TEXT NOT NULL,
             node_type TEXT NOT NULL,
             content TEXT NOT NULL,
@@ -94,7 +91,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             level INTEGER DEFAULT 0,
             summary TEXT,
             summary_metadata JSON,
-            parent_summary_id INTEGER,
+            parent_summary_node_id INTEGER,
 
             -- Tracking fields
             tokens_used INTEGER,
@@ -110,6 +107,8 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             -- Relationship fields
             relates_to_node_id INTEGER,
 
+            -- Composite primary key
+            PRIMARY KEY (node_id, conversation_id)
         )
     """)
 
@@ -121,6 +120,9 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON nodes(timestamp)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sequence ON nodes(conversation_id, sequence_number)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_node_id ON nodes(conversation_id, node_id)"
     )
 
     # Create conversations table for metadata

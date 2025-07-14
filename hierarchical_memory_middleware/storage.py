@@ -58,9 +58,9 @@ class DuckDBStorage:
         with self._get_connection() as conn:
             query = """
                 SELECT
-                    id, conversation_id, node_type, content, timestamp,
+                    node_id, conversation_id, node_type, content, timestamp,
                     sequence_number, line_count, level, summary, summary_metadata,
-                    parent_summary_id, tokens_used, expandable,
+                    parent_summary_node_id, tokens_used, expandable,
                     ai_components, topics, embedding, relates_to_node_id
                 FROM nodes
                 WHERE conversation_id = ?
@@ -81,20 +81,20 @@ class DuckDBStorage:
 
             return self._rows_to_nodes(result)
 
-    async def get_node(self, node_id: int) -> Optional[ConversationNode]:
-        """Get a specific node by ID."""
+    async def get_node(self, node_id: int, conversation_id: str) -> Optional[ConversationNode]:
+        """Get a specific node by composite primary key."""
         with self._get_connection() as conn:
             result = conn.execute(
                 """
                 SELECT
-                    id, conversation_id, node_type, content, timestamp,
+                    node_id, conversation_id, node_type, content, timestamp,
                     sequence_number, line_count, level, summary, summary_metadata,
-                    parent_summary_id, tokens_used, expandable,
+                    parent_summary_node_id, tokens_used, expandable,
                     ai_components, topics, embedding, relates_to_node_id
                 FROM nodes
-                WHERE id = ?
+                WHERE node_id = ? AND conversation_id = ?
             """,
-                (node_id,),
+                (node_id, conversation_id),
             )
 
             return self._row_to_single_node(result)
@@ -124,19 +124,26 @@ class DuckDBStorage:
             ).fetchone()
             sequence_number = seq_result[0] if seq_result else 0
 
+            # Get the next node_id for this conversation (starting from 1)
+            node_id_result = conn.execute(
+                "SELECT COALESCE(MAX(node_id), 0) + 1 FROM nodes WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            node_id = node_id_result[0] if node_id_result else 1
+
             # Calculate line count
             line_count = len(content.split('\n'))
 
             # Insert the new node
-            result = conn.execute(
+            conn.execute(
                 """
                 INSERT INTO nodes (
-                    conversation_id, node_type, content, timestamp, sequence_number,
+                    node_id, conversation_id, node_type, content, timestamp, sequence_number,
                     line_count, level, tokens_used, ai_components, topics, relates_to_node_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                RETURNING id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    node_id,
                     conversation_id,
                     node_type.value,
                     content,
@@ -150,8 +157,6 @@ class DuckDBStorage:
                     relates_to_node_id,
                 ),
             )
-
-            node_id = result.fetchone()[0]
 
             # Update conversation stats
             conn.execute(
@@ -167,14 +172,14 @@ class DuckDBStorage:
             node_result = conn.execute(
                 """
                 SELECT
-                    id, conversation_id, node_type, content, timestamp,
+                    node_id, conversation_id, node_type, content, timestamp,
                     sequence_number, line_count, level, summary, summary_metadata,
-                    parent_summary_id, tokens_used, expandable,
+                    parent_summary_node_id, tokens_used, expandable,
                     ai_components, topics, embedding, relates_to_node_id
                 FROM nodes
-                WHERE id = ?
+                WHERE node_id = ? AND conversation_id = ?
                 """,
-                (node_id,),
+                (node_id, conversation_id),
             )
 
             return self._row_to_single_node(node_result)
@@ -193,6 +198,7 @@ class DuckDBStorage:
     async def compress_node(
         self,
         node_id: int,
+        conversation_id: str,
         compression_level: CompressionLevel,
         summary: str,
         metadata: Optional[Dict[str, Any]] = None,
@@ -203,14 +209,15 @@ class DuckDBStorage:
                 """
                 UPDATE nodes
                 SET level = ?, summary = ?, summary_metadata = ?
-                WHERE id = ?
-                RETURNING id
+                WHERE node_id = ? AND conversation_id = ?
+                RETURNING node_id
             """,
                 (
                     compression_level.value,
                     summary,
                     json.dumps(metadata) if metadata else None,
                     node_id,
+                    conversation_id,
                 ),
             ).fetchone()
 
@@ -232,9 +239,9 @@ class DuckDBStorage:
             result = conn.execute(
                 """
                 SELECT
-                    id, conversation_id, node_type, content, timestamp,
+                    node_id, conversation_id, node_type, content, timestamp,
                     sequence_number, line_count, level, summary, summary_metadata,
-                    parent_summary_id, tokens_used, expandable,
+                    parent_summary_node_id, tokens_used, expandable,
                     ai_components, topics, embedding, relates_to_node_id
                 FROM nodes
                 WHERE conversation_id = ?

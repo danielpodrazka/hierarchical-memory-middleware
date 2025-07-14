@@ -26,7 +26,7 @@ class NodeType(Enum):
 class ConversationNode(BaseModel):
     """A single conversation node storing user message and AI response."""
 
-    id: int
+    node_id: int
     conversation_id: str
     node_type: NodeType
     content: str  # For USER: the message. For AI: all content combined
@@ -38,7 +38,7 @@ class ConversationNode(BaseModel):
     level: CompressionLevel = CompressionLevel.FULL
     summary: Optional[str] = None
     summary_metadata: Optional[Dict[str, Any]] = None
-    parent_summary_id: Optional[int] = None
+    parent_summary_node_id: Optional[int] = None
 
     # Node-specific fields
     tokens_used: Optional[int] = None

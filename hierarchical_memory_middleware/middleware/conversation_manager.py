@@ -26,7 +26,12 @@ logger = logging.getLogger(__name__)
 class HierarchicalConversationManager:
     """Manages conversations with hierarchical memory compression."""
 
-    def __init__(self, config: Config, storage: Optional[DuckDBStorage] = None, mcp_server_url: Optional[str] = None):
+    def __init__(
+        self,
+        config: Config,
+        storage: Optional[DuckDBStorage] = None,
+        mcp_server_url: Optional[str] = None,
+    ):
         """Initialize the conversation manager."""
         self.config = config
         self.conversation_id: Optional[str] = None
@@ -49,7 +54,6 @@ class HierarchicalConversationManager:
         # Create MCP server client if URL provided
         mcp_servers = []
         if mcp_server_url:
-
             mcp_server = MCPServerStreamableHTTP(
                 url=mcp_server_url,
                 tool_prefix="memory",  # Prefix tools with 'memory_'
@@ -73,6 +77,7 @@ class HierarchicalConversationManager:
             f"Initialized HierarchicalConversationManager with model: {config.work_model}"
             + (" and MCP tools" if self.has_mcp_tools else "")
         )
+
     async def _hierarchical_memory_processor(
         self, messages: List[ModelMessage]
     ) -> List[ModelMessage]:
@@ -124,8 +129,10 @@ class HierarchicalConversationManager:
                         ModelResponse(parts=[TextPart(content=node.content)])
                     )
 
-            logger.debug(f"Memory processor: found {len(memory_messages)} memory messages, {len(messages)} incoming messages")
-            
+            logger.debug(
+                f"Memory processor: found {len(memory_messages)} memory messages, {len(messages)} incoming messages"
+            )
+
             # Combine memory with current/new user message
             if len(memory_messages) > 0:
                 # Start with conversation memory
@@ -133,15 +140,23 @@ class HierarchicalConversationManager:
 
                 # Add recent messages to preserve tool use/result pairs and current context
                 # We need to preserve the complete recent conversation including tool interactions
-                recent_message_limit = 5  # Keep last few messages to preserve tool chains
-                recent_messages = messages[-recent_message_limit:] if len(messages) > recent_message_limit else messages
-                
+                recent_message_limit = (
+                    5  # Keep last few messages to preserve tool chains
+                )
+                recent_messages = (
+                    messages[-recent_message_limit:]
+                    if len(messages) > recent_message_limit
+                    else messages
+                )
+
                 for msg in recent_messages:
                     # Add all recent messages to preserve tool use/result pairing
                     # This includes ModelRequest (user), ModelResponse (assistant), and any tool messages
                     combined_messages.append(msg)
 
-                logger.debug(f"Memory processor: returning {len(combined_messages)} total messages ({len(memory_messages)} from memory + {len(recent_messages)} recent)")
+                logger.debug(
+                    f"Memory processor: returning {len(combined_messages)} total messages ({len(memory_messages)} from memory + {len(recent_messages)} recent)"
+                )
                 return combined_messages
             else:
                 # No memory yet, use provided messages as-is
@@ -207,7 +222,7 @@ class HierarchicalConversationManager:
             except Exception as e:
                 logger.debug(f"Could not extract token usage: {e}")
                 tokens_used = None
-            
+
             ai_node = await self.storage.save_conversation_node(
                 conversation_id=self.conversation_id,
                 node_type=NodeType.AI,
@@ -223,7 +238,7 @@ class HierarchicalConversationManager:
             await self._check_and_compress()
 
             logger.info(
-                f"Processed conversation turn (user: {user_node.id}, ai: {ai_node.id}) in conversation {self.conversation_id}"
+                f"Processed conversation turn (user: {user_node.node_id}, ai: {ai_node.node_id}) in conversation {self.conversation_id}"
             )
             return response.output
 
@@ -315,6 +330,7 @@ class HierarchicalConversationManager:
             for result in compression_results:
                 await self.storage.compress_node(
                     node_id=result.original_node_id,
+                    conversation_id=self.conversation_id,
                     compression_level=CompressionLevel.SUMMARY,
                     summary=result.compressed_content,
                     metadata=result.metadata,
@@ -325,15 +341,17 @@ class HierarchicalConversationManager:
         except Exception as e:
             logger.error(f"Error during compression: {str(e)}", exc_info=True)
 
-    async def get_node_details(self, node_id: int) -> Optional[Dict[str, Any]]:
+    async def get_node_details(
+        self, node_id: int, conversation_id: str
+    ) -> Optional[Dict[str, Any]]:
         """Get full details of a specific node (for expansion)."""
         try:
-            node = await self.storage.get_node(node_id)
+            node = await self.storage.get_node(node_id, conversation_id)
             if not node:
                 return None
 
             return {
-                "id": node.id,
+                "node_id": node.node_id,
                 "conversation_id": node.conversation_id,
                 "node_type": node.node_type.value,
                 "content": node.content,
