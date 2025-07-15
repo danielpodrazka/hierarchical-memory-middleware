@@ -10,8 +10,11 @@ This script demonstrates:
 """
 
 import asyncio
+import json
 import logging
+import os
 import sys
+import tempfile
 
 from hierarchical_memory_middleware.config import Config
 from hierarchical_memory_middleware.middleware.conversation_manager import (
@@ -54,6 +57,9 @@ class ChatTester:
 
         self.conversation_id = None
 
+        # Will be set up in start() method once we have conversation_id
+        self.conversation_json_path = None
+
     async def start(self):
         """Start or resume the test conversation."""
         print(f"🚀 Starting chat tester...")
@@ -75,6 +81,12 @@ class ChatTester:
             TEST_CONVERSATION_ID
         )
 
+        # Set up conversation JSON file for real-time viewing
+        conversations_dir = ".conversations"
+        os.makedirs(conversations_dir, exist_ok=True)
+        self.conversation_json_path = os.path.join(conversations_dir, f"{self.conversation_id}.json")
+        print(f"📄 Real-time conversation JSON: {self.conversation_json_path}")
+
         if self.conversation_id == TEST_CONVERSATION_ID:
             print("✅ Resumed existing conversation")
         else:
@@ -82,6 +94,9 @@ class ChatTester:
 
         # Show conversation summary
         await self.show_conversation_summary()
+
+        # Save initial conversation state to JSON
+        await self.save_conversation_to_json()
         print()
 
     async def show_conversation_summary(self):
@@ -191,6 +206,46 @@ class ChatTester:
         except Exception as e:
             print(f"   ❌ Error expanding node {node_id}: {e}")
 
+    async def save_conversation_to_json(self):
+        """Save the current conversation to a JSON file for real-time viewing."""
+        try:
+            # Get all conversation nodes
+            nodes = await self.conversation_manager.storage.get_conversation_nodes(
+                self.conversation_id
+            )
+
+            # Convert nodes to a serializable format
+            conversation_data = {
+                "conversation_id": self.conversation_id,
+                "total_nodes": len(nodes),
+                "last_updated": nodes[-1].timestamp.isoformat() if nodes else None,
+                "nodes": [
+                    {
+                        "node_id": node.node_id,
+                        "node_type": node.node_type.value,
+                        "content": node.content,
+                        "summary": node.summary,
+                        "timestamp": node.timestamp.isoformat(),
+                        "sequence_number": node.sequence_number,
+                        "line_count": node.line_count,
+                        "compression_level": node.level.value,
+                        "tokens_used": node.tokens_used,
+                        "topics": node.topics,
+                        "ai_components": node.ai_components,
+                        "relates_to_node_id": node.relates_to_node_id,
+                    }
+                    for node in nodes
+                ],
+            }
+
+            # Write to temporary file with nice formatting
+            with open(self.conversation_json_path, 'w', encoding='utf-8') as f:
+                json.dump(conversation_data, f, indent=2, ensure_ascii=False)
+
+        except Exception as e:
+            # Don't let JSON export errors break the chat
+            logger.debug(f"Error saving conversation to JSON: {e}")
+
     async def chat_loop(self):
         """Main interactive chat loop."""
         print("💬 Chat started! Type your messages below.")
@@ -221,6 +276,9 @@ class ChatTester:
                 response = await self.conversation_manager.chat(user_input)
                 print(response)
                 print()
+
+                # Save conversation to JSON for real-time viewing
+                await self.save_conversation_to_json()
 
             except KeyboardInterrupt:
                 print("\n👋 Chat interrupted by user")

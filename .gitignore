@@ -3,4 +3,6 @@
 __pycache__/
 .env*
 !.env.example
+# Real-time conversation JSON files
+.conversations/
 
