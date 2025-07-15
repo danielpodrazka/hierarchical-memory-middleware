@@ -170,6 +170,114 @@ class ChatTester:
         except Exception as e:
             print(f"❌ Error searching: {e}")
 
+    async def show_hierarchical_summaries(self, start_node: int, end_node: int):
+        """Show hierarchical summaries for a range of nodes using the new Phase 4 functionality."""
+        try:
+            print(f"📊 Phase 4: Hierarchical Summaries for nodes {start_node}-{end_node}")
+            print("    (This demonstrates the new advanced hierarchy system)")
+            print()
+
+            # For now, we'll call the storage method directly since MCP tools require server setup
+            # In a full MCP setup, this would use the show_summaries tool
+            nodes = await self.conversation_manager.storage.get_nodes_in_range(
+                conversation_id=self.conversation_id,
+                start_node_id=start_node,
+                end_node_id=end_node
+            )
+
+            if not nodes:
+                print(f"   ❌ No nodes found in range {start_node}-{end_node}")
+                return
+
+            # Group nodes by compression level
+            nodes_by_level = {
+                "FULL": [],
+                "SUMMARY": [],
+                "META": [],
+                "ARCHIVE": []
+            }
+
+            for node in nodes:
+                level_name = node.level.name
+                nodes_by_level[level_name].append(node)
+
+            # Display hierarchy
+            total_nodes = len(nodes)
+            total_lines = sum(node.line_count or 0 for node in nodes)
+
+            print(f"   📈 Found {total_nodes} nodes ({total_lines} total lines) in range {start_node}-{end_node}")
+            print()
+
+            # Show compression distribution
+            compression_stats = {
+                level: len(nodes) for level, nodes in nodes_by_level.items() if nodes
+            }
+            
+            if compression_stats:
+                print("   🗜️  Compression Distribution:")
+                for level, count in compression_stats.items():
+                    print(f"      {level}: {count} nodes")
+                print()
+
+            # Show each level in detail
+            level_order = ["FULL", "SUMMARY", "META", "ARCHIVE"]
+            level_descriptions = {
+                "FULL": "🟢 Recent nodes with complete content",
+                "SUMMARY": "🟡 Older nodes with 1-2 sentence summaries", 
+                "META": "🟠 Groups of summary nodes (20-40 nodes each)",
+                "ARCHIVE": "🔴 Very compressed high-level context"
+            }
+
+            for level in level_order:
+                if level in nodes_by_level and nodes_by_level[level]:
+                    level_nodes = nodes_by_level[level]
+                    print(f"   {level_descriptions[level]} ({len(level_nodes)} nodes):")
+                    
+                    for i, node in enumerate(level_nodes[:5], 1):  # Show first 5 nodes
+                        node_type_icon = "👤" if node.node_type.value == "user" else "🤖"
+                        
+                        # Determine what content to show
+                        if node.summary:
+                            display_content = node.summary
+                            content_type = "[Summary]"
+                        else:
+                            display_content = node.content
+                            content_type = "[Full]"
+                            
+                        # Truncate long content
+                        if len(display_content) > 150:
+                            display_content = display_content[:150] + "..."
+                            
+                        print(f"      {i}. {node_type_icon} Node {node.node_id} {content_type}: {display_content}")
+                        
+                    if len(level_nodes) > 5:
+                        print(f"      ... and {len(level_nodes) - 5} more nodes")
+                    print()
+
+            # Show META group information if any META nodes exist
+            meta_nodes = nodes_by_level.get("META", [])
+            if meta_nodes:
+                print("   🔗 META Group Details:")
+                for node in meta_nodes:
+                    if node.summary_metadata:
+                        try:
+                            metadata = json.loads(node.summary_metadata)
+                            meta_info = metadata.get("meta_group_info", {})
+                            if meta_info:
+                                print(f"      📦 Node {node.node_id}: Groups nodes {meta_info.get('start_node_id')}-{meta_info.get('end_node_id')}")
+                                print(f"         Topics: {', '.join(meta_info.get('main_topics', [])[:3])}")
+                                print(f"         Contains: {meta_info.get('node_count')} nodes, {meta_info.get('total_lines')} lines")
+                        except (json.JSONDecodeError, KeyError):
+                            print(f"      📦 Node {node.node_id}: META group (details unavailable)")
+                print()
+
+            print("   ✨ This demonstrates Phase 4: Advanced Hierarchy with 4-level compression!")
+            print("      FULL → SUMMARY → META → ARCHIVE")
+
+        except Exception as e:
+            print(f"   ❌ Error showing hierarchical summaries: {e}")
+            import traceback
+            traceback.print_exc()
     async def expand_node(self, node_id: int):
         """Expand a node to show its full content."""
         try:
@@ -295,6 +403,7 @@ class ChatTester:
         print("   - /expand <node_id>: Expand a node to see full content")
         print("   - /summary         : Show conversation summary")
         print("   - /recent          : Show recent messages")
+        print("   - /summaries <start> <end> : Show hierarchical summaries for node range (Phase 4)")
         print("   - /quit or /exit   : Exit chat")
         print("   - /help            : Show this help")
         print()
@@ -343,6 +452,7 @@ class ChatTester:
             print("   /expand <node_id>- Expand a node to see full content")
             print("   /summary         - Show conversation summary")
             print("   /recent          - Show recent messages")
+            print("   /summaries <start> <end> - Show hierarchical summaries for node range (Phase 4)")
             print("   /quit, /exit     - Exit chat")
         elif cmd == "/search":
             if args:
@@ -362,6 +472,20 @@ class ChatTester:
             await self.show_conversation_summary()
         elif cmd == "/recent":
             await self.show_recent_messages()
+        elif cmd == "/summaries":
+            if args:
+                try:
+                    parts = args.split()
+                    if len(parts) == 2:
+                        start_node = int(parts[0])
+                        end_node = int(parts[1])
+                        await self.show_hierarchical_summaries(start_node, end_node)
+                    else:
+                        print("❌ Usage: /summaries <start_node> <end_node>")
+                except ValueError:
+                    print("❌ Invalid node IDs. Please provide numbers.")
+            else:
+                print("❌ Usage: /summaries <start_node> <end_node>")
         else:
             print(f"❌ Unknown command: {cmd}. Type /help for available commands.")
 

@@ -18,6 +18,7 @@ from pydantic_ai.mcp import MCPServerStreamableHTTP
 from ..config import Config
 from ..storage import DuckDBStorage
 from ..compression import SimpleCompressor, CompressionManager
+from ..advanced_hierarchy import AdvancedCompressionManager, HierarchyThresholds
 from ..models import CompressionLevel, NodeType
 
 
@@ -40,9 +41,26 @@ class HierarchicalConversationManager:
         # Initialize storage
         self.storage = storage or DuckDBStorage(config.db_path)
 
-        # Initialize compression system
+        # Initialize advanced hierarchical compression system
         self.compressor = SimpleCompressor(max_words=8)
-        self.compression_manager = CompressionManager(
+        
+        # Create hierarchy thresholds (configurable)
+        self.hierarchy_thresholds = HierarchyThresholds(
+            summary_threshold=config.recent_node_limit,  # Use config setting
+            meta_threshold=50,    # SUMMARY nodes before META grouping
+            archive_threshold=200, # META groups before ARCHIVE
+            meta_group_size=20,   # Minimum nodes per META group
+            meta_group_max=40     # Maximum nodes per META group
+        )
+        
+        # Initialize advanced compression manager
+        self.compression_manager = AdvancedCompressionManager(
+            base_compressor=self.compressor,
+            thresholds=self.hierarchy_thresholds
+        )
+        
+        # Keep the simple compression manager for backward compatibility
+        self.simple_compression_manager = CompressionManager(
             compressor=self.compressor, recent_node_limit=config.recent_node_limit
         )
 
@@ -565,42 +583,71 @@ class HierarchicalConversationManager:
             return []
 
     async def _check_and_compress(self) -> None:
-        """Check if compression is needed and perform it."""
+        """Check if advanced hierarchical compression is needed and perform it."""
         try:
             # Get all nodes for this conversation
             all_nodes = await self.storage.get_conversation_nodes(
                 conversation_id=self.conversation_id
             )
 
-            # Identify nodes that need compression
-            nodes_to_compress = self.compression_manager.identify_nodes_to_compress(
-                all_nodes
-            )
-
-            if not nodes_to_compress:
+            if not all_nodes:
                 return
 
-            logger.info(f"Compressing {len(nodes_to_compress)} nodes")
+            logger.info(f"Checking hierarchy compression for {len(all_nodes)} nodes")
 
-            # Compress the nodes
-            compression_results = self.compression_manager.compress_nodes(
-                nodes_to_compress
+            # Use advanced hierarchy compression system
+            compression_results = await self.compression_manager.process_hierarchy_compression(
+                nodes=all_nodes,
+                storage=self.storage
             )
 
-            # Update nodes in storage
-            for result in compression_results:
-                await self.storage.compress_node(
-                    node_id=result.original_node_id,
-                    conversation_id=self.conversation_id,
-                    compression_level=CompressionLevel.SUMMARY,
-                    summary=result.compressed_content,
-                    metadata=result.metadata,
-                )
+            # Log the results
+            if compression_results.get("error"):
+                logger.error(f"Hierarchy compression error: {compression_results['error']}")
+                return
 
-            logger.info(f"Successfully compressed {len(compression_results)} nodes")
+            total_processed = compression_results.get("total_processed", 0)
+            if total_processed > 0:
+                logger.info(
+                    f"Advanced hierarchy compression completed: "
+                    f"{compression_results.get('summary_compressed', 0)} summary compressions, "
+                    f"{compression_results.get('meta_groups_created', 0)} META groups created, "
+                    f"{compression_results.get('archive_compressed', 0)} archive compressions"
+                )
+            else:
+                logger.debug("No hierarchy compression needed at this time")
 
         except Exception as e:
-            logger.error(f"Error during compression: {str(e)}", exc_info=True)
+            logger.error(f"Error during advanced hierarchy compression: {str(e)}", exc_info=True)
+            
+            # Fallback to simple compression if advanced fails
+            try:
+                logger.info("Falling back to simple compression system")
+                
+                # Use the simple compression manager as fallback
+                nodes_to_compress = self.simple_compression_manager.identify_nodes_to_compress(
+                    all_nodes
+                )
+                
+                if nodes_to_compress:
+                    compression_results = self.simple_compression_manager.compress_nodes(
+                        nodes_to_compress
+                    )
+                    
+                    # Update nodes in storage using simple compression
+                    for result in compression_results:
+                        await self.storage.compress_node(
+                            node_id=result.original_node_id,
+                            conversation_id=self.conversation_id,
+                            compression_level=CompressionLevel.SUMMARY,
+                            summary=result.compressed_content,
+                            metadata=result.metadata,
+                        )
+                    
+                    logger.info(f"Fallback compression completed: {len(compression_results)} nodes")
+                    
+            except Exception as fallback_error:
+                logger.error(f"Fallback compression also failed: {str(fallback_error)}", exc_info=True)
 
     async def get_node_details(
         self, node_id: int, conversation_id: str

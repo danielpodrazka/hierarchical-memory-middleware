@@ -428,3 +428,148 @@ class DuckDBStorage:
             node_dict["summary"] = enhanced_summary
             return ConversationNode.model_validate(node_dict)
         return node
+
+    async def get_nodes_in_range(
+        self, 
+        conversation_id: str, 
+        start_node_id: int, 
+        end_node_id: int
+    ) -> List[ConversationNode]:
+        """Get nodes within a specific ID range for a conversation."""
+        with self._get_connection() as conn:
+            result = conn.execute(
+                """
+                SELECT
+                    node_id, conversation_id, node_type, content, timestamp,
+                    sequence_number, line_count, level, summary, summary_metadata,
+                    parent_summary_node_id, tokens_used, expandable,
+                    ai_components, topics, embedding, relates_to_node_id
+                FROM nodes
+                WHERE conversation_id = ? AND node_id >= ? AND node_id <= ?
+                ORDER BY sequence_number
+                """,
+                (conversation_id, start_node_id, end_node_id),
+            )
+
+            return self._rows_to_nodes(result)
+
+    async def create_meta_group_node(
+        self,
+        conversation_id: str,
+        meta_group,  # MetaGroup object
+        grouped_node_ids: List[int]
+    ) -> ConversationNode:
+        """Create a META-level node that represents a group of SUMMARY nodes."""
+        from datetime import datetime
+        import json
+
+        # Create content for the META node
+        meta_content = f"META GROUP: {meta_group.summary}"
+        
+        # Create comprehensive summary with group information
+        meta_summary = (
+            f"Meta group of nodes {meta_group.start_node_id}-{meta_group.end_node_id}: "
+            f"{meta_group.summary} "
+            f"(groups {meta_group.node_count} nodes, {meta_group.total_lines} total lines)"
+        )
+
+        # Create metadata about the grouped nodes
+        meta_metadata = {
+            "meta_group_info": {
+                "start_node_id": meta_group.start_node_id,
+                "end_node_id": meta_group.end_node_id,
+                "start_sequence": meta_group.start_sequence,
+                "end_sequence": meta_group.end_sequence,
+                "node_count": meta_group.node_count,
+                "total_lines": meta_group.total_lines,
+                "main_topics": meta_group.main_topics,
+                "timestamp_range": [
+                    meta_group.timestamp_range[0].isoformat(),
+                    meta_group.timestamp_range[1].isoformat()
+                ]
+            },
+            "grouped_node_ids": grouped_node_ids,
+            "compression_level": "META",
+            "is_group_node": True
+        }
+
+        # Ensure conversation exists
+        await self._ensure_conversation_exists(conversation_id)
+
+        with self._get_connection() as conn:
+            # Get the next sequence number for this conversation
+            seq_result = conn.execute(
+                "SELECT COALESCE(MAX(sequence_number), -1) + 1 FROM nodes WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            sequence_number = seq_result[0] if seq_result else 0
+
+            # Get the next node_id for this conversation
+            node_id_result = conn.execute(
+                "SELECT COALESCE(MAX(node_id), 0) + 1 FROM nodes WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            node_id = node_id_result[0] if node_id_result else 1
+
+            # Calculate line count for the META content
+            line_count = len(meta_content.split("\n"))
+
+            # Insert the META group node
+            conn.execute(
+                """
+                INSERT INTO nodes (
+                    node_id, conversation_id, node_type, content, timestamp, sequence_number,
+                    line_count, level, summary, summary_metadata, topics
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    node_id,
+                    conversation_id,
+                    NodeType.AI.value,  # META groups are typically AI-generated summaries
+                    meta_content,
+                    datetime.now(),
+                    sequence_number,
+                    line_count,
+                    CompressionLevel.META.value,
+                    meta_summary,
+                    json.dumps(meta_metadata),
+                    json.dumps(meta_group.main_topics) if meta_group.main_topics else None,
+                ),
+            )
+
+            # Mark the original nodes as part of this META group
+            for grouped_node_id in grouped_node_ids:
+                conn.execute(
+                    """
+                    UPDATE nodes
+                    SET parent_summary_node_id = ?, level = ?
+                    WHERE node_id = ? AND conversation_id = ?
+                    """,
+                    (node_id, CompressionLevel.META.value, grouped_node_id, conversation_id),
+                )
+
+            # Update conversation stats
+            conn.execute(
+                """
+                UPDATE conversations
+                SET total_nodes = total_nodes + 1, last_updated = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (conversation_id,),
+            )
+
+            # Fetch and return the created META node
+            node_result = conn.execute(
+                """
+                SELECT
+                    node_id, conversation_id, node_type, content, timestamp,
+                    sequence_number, line_count, level, summary, summary_metadata,
+                    parent_summary_node_id, tokens_used, expandable,
+                    ai_components, topics, embedding, relates_to_node_id
+                FROM nodes
+                WHERE node_id = ? AND conversation_id = ?
+                """,
+                (node_id, conversation_id),
+            )
+
+            return self._row_to_single_node(node_result)

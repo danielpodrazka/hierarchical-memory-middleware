@@ -83,8 +83,6 @@ class MemoryMCPServer:
             full original content, including all details that may have been
             compressed away in the hierarchical memory system.
 
-            Note: The conversation_id must be set first using set_conversation_id tool.
-
             Args:
                 node_id: The node identifier within the conversation
 
@@ -142,10 +140,10 @@ class MemoryMCPServer:
                 }
 
         @self.mcp.tool()
-        async def find(query: str, limit: int = 10, regex: bool = False) -> Dict[str, Any]:
+        async def find(
+            query: str, limit: int = 10, regex: bool = False
+        ) -> Dict[str, Any]:
             """Full text search for exact matches or regex matches.
-
-            Note: The conversation_id must be set first using set_conversation_id tool.
 
             Args:
                 query: The search query string
@@ -187,8 +185,6 @@ class MemoryMCPServer:
             hierarchical memory state, including compression statistics
             and node counts at different levels.
 
-            Note: The conversation_id must be set first using set_conversation_id tool.
-
             Returns:
                 Dictionary containing conversation statistics and compression info.
             """
@@ -208,6 +204,160 @@ class MemoryMCPServer:
                     f"Error getting conversation stats: {str(e)}", exc_info=True
                 )
                 return {"error": f"Failed to get conversation stats: {str(e)}"}
+
+        @self.mcp.tool()
+        async def show_summaries(start_node: int, end_node: int) -> Dict[str, Any]:
+            """Show summaries of nodes within a specified range.
+
+            This tool provides a hierarchical view of compressed nodes in a range,
+            showing how the conversation has been compressed at different levels
+            (SUMMARY, META, ARCHIVE) within the specified node range.
+
+            Args:
+                start_node: Starting node ID (inclusive)
+                end_node: Ending node ID (inclusive)
+
+            Returns:
+                Dictionary containing summaries at different compression levels
+                for the specified range, with node details and compression info.
+            """
+            try:
+                if self.current_conversation_id is None:
+                    return {
+                        "error": "No conversation ID set. Please call set_conversation_id first.",
+                        "start_node": start_node,
+                        "end_node": end_node,
+                    }
+
+                if start_node > end_node:
+                    return {
+                        "error": "Start node must be less than or equal to end node",
+                        "start_node": start_node,
+                        "end_node": end_node,
+                    }
+
+                logger.info(f"Showing summaries for nodes {start_node}-{end_node}")
+
+                # Get nodes in the specified range
+                result = await self.storage.get_nodes_in_range(
+                    conversation_id=self.current_conversation_id,
+                    start_node_id=start_node,
+                    end_node_id=end_node,
+                )
+
+                if not result:
+                    return {
+                        "error": f"No nodes found in range {start_node}-{end_node}",
+                        "start_node": start_node,
+                        "end_node": end_node,
+                        "conversation_id": self.current_conversation_id,
+                    }
+
+                # Group nodes by compression level
+                nodes_by_level = {"FULL": [], "SUMMARY": [], "META": [], "ARCHIVE": []}
+
+                for node in result:
+                    level_name = node.level.name
+                    nodes_by_level[level_name].append(
+                        {
+                            "node_id": node.node_id,
+                            "sequence_number": node.sequence_number,
+                            "node_type": node.node_type.value,
+                            "content_preview": (node.content[:100] + "...")
+                            if node.content and len(node.content) > 100
+                            else (node.content or ""),
+                            "summary": node.summary,
+                            "line_count": node.line_count,
+                            "timestamp": node.timestamp.isoformat(),
+                            "topics": node.topics or [],
+                            "tokens_used": node.tokens_used,
+                        }
+                    )
+
+                # Calculate statistics
+                total_nodes = len(result)
+                total_lines = sum(node.line_count or 0 for node in result)
+                compression_stats = {
+                    level: len(nodes)
+                    for level, nodes in nodes_by_level.items()
+                    if nodes
+                }
+
+                return {
+                    "success": True,
+                    "conversation_id": self.current_conversation_id,
+                    "range": {
+                        "start_node": start_node,
+                        "end_node": end_node,
+                        "actual_start": min(node.node_id for node in result)
+                        if result
+                        else None,
+                        "actual_end": max(node.node_id for node in result)
+                        if result
+                        else None,
+                    },
+                    "statistics": {
+                        "total_nodes": total_nodes,
+                        "total_lines": total_lines,
+                        "compression_distribution": compression_stats,
+                    },
+                    "nodes_by_level": nodes_by_level,
+                    "hierarchical_view": self._create_hierarchical_view(nodes_by_level),
+                }
+
+            except Exception as e:
+                logger.error(
+                    f"Error showing summaries for range {start_node}-{end_node}: {str(e)}",
+                    exc_info=True,
+                )
+                return {
+                    "error": f"Failed to show summaries: {str(e)}",
+                    "start_node": start_node,
+                    "end_node": end_node,
+                    "conversation_id": self.current_conversation_id,
+                }
+
+    def _create_hierarchical_view(
+        self, nodes_by_level: Dict[str, List[Dict]]
+    ) -> Dict[str, Any]:
+        """Create a hierarchical view of the nodes organized by compression level."""
+        hierarchical_view = {"compression_levels": [], "summary": ""}
+
+        level_order = ["FULL", "SUMMARY", "META", "ARCHIVE"]
+        level_descriptions = {
+            "FULL": "Recent nodes with complete content",
+            "SUMMARY": "Older nodes with 1-2 sentence summaries",
+            "META": "Groups of summary nodes (20-40 nodes each)",
+            "ARCHIVE": "Very compressed high-level context",
+        }
+
+        total_nodes = 0
+        for level in level_order:
+            if level in nodes_by_level and nodes_by_level[level]:
+                nodes = nodes_by_level[level]
+                level_info = {
+                    "level": level,
+                    "description": level_descriptions[level],
+                    "node_count": len(nodes),
+                    "nodes": nodes,
+                }
+                hierarchical_view["compression_levels"].append(level_info)
+                total_nodes += len(nodes)
+
+        # Create summary
+        if total_nodes > 0:
+            level_counts = [
+                f"{level}: {len(nodes_by_level[level])}"
+                for level in level_order
+                if level in nodes_by_level and nodes_by_level[level]
+            ]
+            hierarchical_view["summary"] = (
+                f"Total {total_nodes} nodes across {len(level_counts)} compression levels ({', '.join(level_counts)})"
+            )
+        else:
+            hierarchical_view["summary"] = "No nodes found in the specified range"
+
+        return hierarchical_view
 
     async def start_conversation(self, conversation_id: Optional[str] = None) -> str:
         """Start or resume a conversation for the MCP server.
