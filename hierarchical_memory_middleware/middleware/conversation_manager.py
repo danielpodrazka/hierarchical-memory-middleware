@@ -47,10 +47,7 @@ class HierarchicalConversationManager:
         )
 
         # Initialize PydanticAI agent with optional MCP server integration
-        system_prompt = """You are a helpful AI assistant. You provide accurate and helpful responses.
-
-            You have access to conversation memory that allows you to remember previous interactions.
-            When you need to reference earlier parts of the conversation, you can do so naturally."""
+        system_prompt = """You are a helpful AI assistant. You provide accurate and helpful responses."""
 
         # Create MCP server client if URL provided
         mcp_servers = []
@@ -80,7 +77,7 @@ class HierarchicalConversationManager:
         # Track tool calls and results during execution
         self._current_tool_calls = []
         self._current_tool_results = []
-        
+
         # Track what the AI actually sees for debugging/visualization
         self._last_ai_view_data = None
 
@@ -174,7 +171,7 @@ class HierarchicalConversationManager:
         """Process message history using hierarchical memory system."""
         # Reset AI view data
         self._last_ai_view_data = None
-        
+
         if not self.conversation_id:
             # No conversation started yet, return messages as-is
             return messages
@@ -191,11 +188,10 @@ class HierarchicalConversationManager:
                 limit=self.config.recent_node_limit,
             )
 
-            # Get some compressed nodes for broader context
-            compressed_nodes = await self.storage.get_conversation_nodes(
+            # Get the most recent compressed nodes
+            compressed_nodes = await self.storage.get_recent_compressed_nodes(
                 conversation_id=self.conversation_id,
-                limit=10,
-                level=CompressionLevel.SUMMARY,
+                limit=5,  # Get exactly the 5 most recent compressed nodes
             )
 
             # Initialize AI view data
@@ -209,35 +205,37 @@ class HierarchicalConversationManager:
             # Build message history from hierarchical memory
             memory_messages = []
 
-            # Add compressed context first (older messages)
-            for node in compressed_nodes[:5]:  # Limit compressed context
+            # Add compressed context (already the most recent from get_recent_compressed_nodes)
+            for node in compressed_nodes:
                 if node.node_type == NodeType.USER:
                     content = node.summary or node.content
                     memory_messages.append(
-                        ModelRequest(
-                            parts=[UserPromptPart(content=content)]
-                        )
+                        ModelRequest(parts=[UserPromptPart(content=content)])
                     )
-                    ai_view_data["compressed_nodes"].append({
-                        "node_id": node.node_id,
-                        "node_type": "user",
-                        "content": content,
-                        "is_summary": bool(node.summary),
-                        "sequence_number": node.sequence_number,
-                    })
+                    ai_view_data["compressed_nodes"].append(
+                        {
+                            "node_id": node.node_id,
+                            "node_type": "user",
+                            "content": content,
+                            "is_summary": bool(node.summary),
+                            "sequence_number": node.sequence_number,
+                        }
+                    )
                 elif node.node_type == NodeType.AI:
                     # Try to reconstruct full message structure for compressed nodes
                     reconstructed_msg = self._reconstruct_ai_message_from_node(
                         node, use_summary=True
                     )
                     memory_messages.append(reconstructed_msg)
-                    ai_view_data["compressed_nodes"].append({
-                        "node_id": node.node_id,
-                        "node_type": "ai",
-                        "content": node.summary or node.content,
-                        "is_summary": True,
-                        "sequence_number": node.sequence_number,
-                    })
+                    ai_view_data["compressed_nodes"].append(
+                        {
+                            "node_id": node.node_id,
+                            "node_type": "ai",
+                            "content": node.summary or node.content,
+                            "is_summary": True,
+                            "sequence_number": node.sequence_number,
+                        }
+                    )
 
             # Add recent full messages
             for node in recent_nodes[-8:]:  # Last 8 recent nodes
@@ -245,24 +243,28 @@ class HierarchicalConversationManager:
                     memory_messages.append(
                         ModelRequest(parts=[UserPromptPart(content=node.content)])
                     )
-                    ai_view_data["recent_nodes"].append({
-                        "node_id": node.node_id,
-                        "node_type": "user",
-                        "content": node.content,
-                        "sequence_number": node.sequence_number,
-                    })
+                    ai_view_data["recent_nodes"].append(
+                        {
+                            "node_id": node.node_id,
+                            "node_type": "user",
+                            "content": node.content,
+                            "sequence_number": node.sequence_number,
+                        }
+                    )
                 elif node.node_type == NodeType.AI:
                     # Try to reconstruct full message structure for recent nodes
                     reconstructed_msg = self._reconstruct_ai_message_from_node(
                         node, use_summary=False
                     )
                     memory_messages.append(reconstructed_msg)
-                    ai_view_data["recent_nodes"].append({
-                        "node_id": node.node_id,
-                        "node_type": "ai",
-                        "content": node.content,
-                        "sequence_number": node.sequence_number,
-                    })
+                    ai_view_data["recent_nodes"].append(
+                        {
+                            "node_id": node.node_id,
+                            "node_type": "ai",
+                            "content": node.content,
+                            "sequence_number": node.sequence_number,
+                        }
+                    )
 
             logger.debug(
                 f"Memory processor: found {len(memory_messages)} memory messages, {len(messages)} incoming messages"
@@ -284,22 +286,24 @@ class HierarchicalConversationManager:
 
                 # Track recent messages from input
                 for msg in recent_messages:
-                    if hasattr(msg, 'parts'):
+                    if hasattr(msg, "parts"):
                         # Extract content from message parts
                         content_parts = []
                         for part in msg.parts:
-                            if hasattr(part, 'content'):
+                            if hasattr(part, "content"):
                                 content_parts.append(part.content)
-                            elif hasattr(part, 'tool_name'):
+                            elif hasattr(part, "tool_name"):
                                 content_parts.append(f"[Tool call: {part.tool_name}]")
                         content = " ".join(content_parts) if content_parts else str(msg)
                     else:
                         content = str(msg)
-                    
-                    ai_view_data["recent_messages_from_input"].append({
-                        "message_type": msg.__class__.__name__,
-                        "content": content,
-                    })
+
+                    ai_view_data["recent_messages_from_input"].append(
+                        {
+                            "message_type": msg.__class__.__name__,
+                            "content": content,
+                        }
+                    )
 
                 # Add recent messages without cleaning to preserve tool call flows
                 combined_messages.extend(recent_messages)
@@ -318,22 +322,24 @@ class HierarchicalConversationManager:
                 # No memory yet, use provided messages as-is to preserve tool flows
                 ai_view_data["recent_messages_from_input"] = []
                 for msg in messages:
-                    if hasattr(msg, 'parts'):
+                    if hasattr(msg, "parts"):
                         content_parts = []
                         for part in msg.parts:
-                            if hasattr(part, 'content'):
+                            if hasattr(part, "content"):
                                 content_parts.append(part.content)
-                            elif hasattr(part, 'tool_name'):
+                            elif hasattr(part, "tool_name"):
                                 content_parts.append(f"[Tool call: {part.tool_name}]")
                         content = " ".join(content_parts) if content_parts else str(msg)
                     else:
                         content = str(msg)
-                    
-                    ai_view_data["recent_messages_from_input"].append({
-                        "message_type": msg.__class__.__name__,
-                        "content": content,
-                    })
-                
+
+                    ai_view_data["recent_messages_from_input"].append(
+                        {
+                            "message_type": msg.__class__.__name__,
+                            "content": content,
+                        }
+                    )
+
                 ai_view_data["total_messages_sent_to_ai"] = len(messages)
                 self._last_ai_view_data = ai_view_data
                 return messages
@@ -345,7 +351,7 @@ class HierarchicalConversationManager:
 
     def get_last_ai_view_data(self) -> Optional[Dict[str, Any]]:
         """Get the last captured AI view data from the memory processor.
-        
+
         Returns:
             Dictionary containing what the AI actually saw in the last message processing,
             or None if no data is available (e.g., no conversation started, tool calls active).

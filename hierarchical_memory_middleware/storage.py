@@ -232,6 +232,33 @@ class DuckDBStorage:
             conversation_id=conversation_id, limit=limit, level=CompressionLevel.FULL
         )
 
+    async def get_recent_compressed_nodes(
+        self, conversation_id: str, limit: int = 5
+    ) -> List[ConversationNode]:
+        """Get the most recent nodes at SUMMARY compression level."""
+        with self._get_connection() as conn:
+            query = """
+                SELECT
+                    node_id, conversation_id, node_type, content, timestamp,
+                    sequence_number, line_count, level, summary, summary_metadata,
+                    parent_summary_node_id, tokens_used, expandable,
+                    ai_components, topics, embedding, relates_to_node_id
+                FROM nodes
+                WHERE conversation_id = ? AND level = ?
+                ORDER BY sequence_number DESC
+                LIMIT ?
+            """
+            params = [conversation_id, CompressionLevel.SUMMARY.value, limit]
+
+            result = conn.execute(query, params)
+            
+            # Get nodes using arrow and convert
+            nodes = self._rows_to_nodes(result)
+            
+            # Reverse to get chronological order (oldest first)
+            nodes.reverse()
+            return nodes
+
     async def search_nodes(
         self, conversation_id: str, query: str, limit: int = 10, regex: bool = False
     ) -> List[SearchResult]:
