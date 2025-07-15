@@ -47,7 +47,6 @@ async def main() -> None:
     )
     parser.add_argument(
         "--db-path",
-        default="./conversations.db",
         help="Path to DuckDB database file (default: ./conversations.db)",
     )
     parser.add_argument(
@@ -71,7 +70,8 @@ async def main() -> None:
         env_file_path = project_root / ".env"
         config = Config.from_env(env_file=str(env_file_path))
         # Override with command line arguments
-        config.db_path = args.db_path
+        if args.db_path is not None:
+            config.db_path = args.db_path
         config.work_model = args.work_model
         config.summary_model = args.work_model  # Use same model for now
         config.mcp_port = args.port  # Use the port from command line
