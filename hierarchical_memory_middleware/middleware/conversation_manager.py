@@ -107,19 +107,24 @@ class HierarchicalConversationManager:
             logger.error(f"❌ TOOL CALL FAILED: {tool_name} - {str(e)}")
             raise
 
-    def _reconstruct_ai_message_from_node(self, node, use_summary: bool = False) -> ModelResponse:
+    def _reconstruct_ai_message_from_node(
+        self, node, use_summary: bool = False
+    ) -> ModelResponse:
         """Reconstruct a ModelResponse from a stored AI node as text-only to avoid tool call pairing issues."""
         try:
             # Always use text-only reconstruction to avoid tool_use/tool_result pairing issues
             # The final text content contains the relevant information from tool executions
             content = node.summary if use_summary else node.content
             return ModelResponse(parts=[TextPart(content=content)])
-            
+
         except Exception as e:
-            logger.debug(f"Error reconstructing AI message from node {node.node_id}: {e}")
+            logger.debug(
+                f"Error reconstructing AI message from node {node.node_id}: {e}"
+            )
             # Ultimate fallback
             content = node.summary if use_summary else node.content
             return ModelResponse(parts=[TextPart(content=content)])
+
 
     async def _hierarchical_memory_processor(
         self, messages: List[ModelMessage]
@@ -156,7 +161,9 @@ class HierarchicalConversationManager:
                     )
                 elif node.node_type == NodeType.AI:
                     # Try to reconstruct full message structure for compressed nodes
-                    reconstructed_msg = self._reconstruct_ai_message_from_node(node, use_summary=True)
+                    reconstructed_msg = self._reconstruct_ai_message_from_node(
+                        node, use_summary=True
+                    )
                     memory_messages.append(reconstructed_msg)
 
             # Add recent full messages
@@ -167,7 +174,9 @@ class HierarchicalConversationManager:
                     )
                 elif node.node_type == NodeType.AI:
                     # Try to reconstruct full message structure for recent nodes
-                    reconstructed_msg = self._reconstruct_ai_message_from_node(node, use_summary=False)
+                    reconstructed_msg = self._reconstruct_ai_message_from_node(
+                        node, use_summary=False
+                    )
                     memory_messages.append(reconstructed_msg)
 
             logger.debug(
@@ -179,33 +188,29 @@ class HierarchicalConversationManager:
                 # Start with conversation memory
                 combined_messages = memory_messages.copy()
 
-                # Add recent messages to preserve tool use/result pairs and current context
-                # We need to preserve the complete recent conversation including tool interactions
-                recent_message_limit = (
-                    5  # Keep last few messages to preserve tool chains
-                )
+                # Add recent messages AS-IS to preserve active tool execution
+                # Only the stored memory_messages above were cleaned, not the live conversation
+                recent_message_limit = 5  # Keep last few messages
                 recent_messages = (
                     messages[-recent_message_limit:]
                     if len(messages) > recent_message_limit
                     else messages
                 )
 
-                for msg in recent_messages:
-                    # Add all recent messages to preserve tool use/result pairing
-                    # This includes ModelRequest (user), ModelResponse (assistant), and any tool messages
-                    combined_messages.append(msg)
+                # Add recent messages without cleaning to preserve tool call flows
+                combined_messages.extend(recent_messages)
 
                 logger.debug(
                     f"Memory processor: returning {len(combined_messages)} total messages ({len(memory_messages)} from memory + {len(recent_messages)} recent)"
                 )
                 return combined_messages
             else:
-                # No memory yet, use provided messages as-is
+                # No memory yet, use provided messages as-is to preserve tool flows
                 return messages
 
         except Exception as e:
             logger.error(f"Error in history processor: {str(e)}", exc_info=True)
-            # Fallback to provided messages on error
+            # Fallback to provided messages on error to preserve tool flows
             return messages
 
     async def start_conversation(self, conversation_id: Optional[str] = None) -> str:
