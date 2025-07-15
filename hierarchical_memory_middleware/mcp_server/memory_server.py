@@ -142,17 +142,15 @@ class MemoryMCPServer:
                 }
 
         @self.mcp.tool()
-        async def find(query: str, limit: int = 10) -> Dict[str, Any]:
-            """Search across conversation history for relevant nodes.
-
-            This tool allows searching through all conversation nodes (both
-            compressed and full) to find content relevant to a query.
+        async def find(query: str, limit: int = 10, regex: bool = False) -> Dict[str, Any]:
+            """Full text search for exact matches or regex matches.
 
             Note: The conversation_id must be set first using set_conversation_id tool.
 
             Args:
                 query: The search query string
                 limit: Maximum number of results to return (default: 10)
+                regex: Whether to treat query as regex pattern (default: False)
 
             Returns:
                 Dictionary containing search results with relevance scores
@@ -165,12 +163,14 @@ class MemoryMCPServer:
                         "query": query,
                     }
 
-                logger.info(f"Searching memory for: {query[:50]}...")
-                results = await self.conversation_manager.find(query, limit)
+                search_type = "regex" if regex else "exact"
+                logger.info(f"Searching memory ({search_type}) for: {query[:50]}...")
+                results = await self.conversation_manager.find(query, limit, regex)
 
                 return {
                     "success": True,
                     "query": query,
+                    "search_type": search_type,
                     "results_count": len(results),
                     "results": results,
                 }
