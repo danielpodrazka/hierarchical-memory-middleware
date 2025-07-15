@@ -153,11 +153,101 @@ async def test_search_nodes(storage):
         content="Java is also a programming language.",
     )
 
-    # Search for "Python"
+    # Search for "Python" (exact match)
     results = await storage.search_nodes(conversation_id, "Python")
 
     assert len(results) >= 1
     assert any("Python" in result.node.content for result in results)
+
+    # Search for "programming" (should match both Python and Java responses)
+    results = await storage.search_nodes(conversation_id, "programming")
+
+    assert len(results) >= 2
+    assert any("programming" in result.node.content for result in results)
+
+
+@pytest.mark.asyncio
+async def test_search_nodes_regex(storage):
+    """Test regex node searching."""
+    conversation_id = "test-conv-regex"
+
+    # Save multiple conversation nodes with different patterns
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="My email is john.doe@example.com",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="I understand your email is john.doe@example.com",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="Also contact me at jane.smith@test.org",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.AI,
+        content="Phone numbers: 123-456-7890 and (555) 123-4567",
+    )
+
+    await storage.save_conversation_node(
+        conversation_id=conversation_id,
+        node_type=NodeType.USER,
+        content="Version 1.2.3 is now available, also check v2.0.1",
+    )
+
+    # Test email regex pattern
+    email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+    results = await storage.search_nodes(conversation_id, email_pattern, regex=True)
+
+    assert len(results) >= 2  # Should find at least 2 nodes with emails
+    found_emails = []
+    for result in results:
+        content = result.node.content.lower()
+        if "john.doe@example.com" in content or "jane.smith@test.org" in content:
+            found_emails.append(result.node.content)
+    assert len(found_emails) >= 2
+
+    # Test phone number regex pattern
+    phone_pattern = r"\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{4}"
+    results = await storage.search_nodes(conversation_id, phone_pattern, regex=True)
+
+    assert len(results) >= 1  # Should find the AI response with phone numbers
+    assert any("123-456-7890" in result.node.content or "555" in result.node.content for result in results)
+
+    # Test version number regex pattern
+    version_pattern = r"v?\d+\.\d+\.\d+"
+    results = await storage.search_nodes(conversation_id, version_pattern, regex=True)
+
+    assert len(results) >= 1  # Should find the version message
+    assert any("1.2.3" in result.node.content or "2.0.1" in result.node.content for result in results)
+
+    # Test case-insensitive regex
+    case_pattern = r"(?i)EMAIL"  # Should match "email" regardless of case
+    results = await storage.search_nodes(conversation_id, case_pattern, regex=True)
+
+    assert len(results) >= 1  # Should find nodes mentioning "email"
+
+    # Test invalid regex pattern (should return empty results)
+    invalid_pattern = r"[invalid"  # Unclosed bracket
+    results = await storage.search_nodes(conversation_id, invalid_pattern, regex=True)
+
+    assert len(results) == 0  # Should return empty list for invalid regex
+
+    # Test exact search vs regex search difference
+    # Exact search for period should find version numbers
+    exact_results = await storage.search_nodes(conversation_id, ".", regex=False)
+    # Regex search for period should find everything (since . matches any character)
+    regex_results = await storage.search_nodes(conversation_id, ".", regex=True)
+
+    # Regex should return more results than exact match
+    assert len(regex_results) >= len(exact_results)
 
 
 @pytest.mark.asyncio

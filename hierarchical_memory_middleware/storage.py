@@ -1,6 +1,7 @@
 """DuckDB storage layer for hierarchical memory system."""
 
 import json
+import re
 from typing import List, Optional, Dict, Any, Tuple
 import duckdb
 from contextlib import contextmanager
@@ -232,31 +233,69 @@ class DuckDBStorage:
         )
 
     async def search_nodes(
-        self, conversation_id: str, query: str, limit: int = 10
+        self, conversation_id: str, query: str, limit: int = 10, regex: bool = False
     ) -> List[SearchResult]:
-        """Basic text search across nodes (Phase 1 implementation)."""
+        """Text search across nodes with support for exact matches or regex patterns."""
         with self._get_connection() as conn:
-            result = conn.execute(
-                """
-                SELECT
-                    node_id, conversation_id, node_type, content, timestamp,
-                    sequence_number, line_count, level, summary, summary_metadata,
-                    parent_summary_node_id, tokens_used, expandable,
-                    ai_components, topics, embedding, relates_to_node_id
-                FROM nodes
-                WHERE conversation_id = ?
-                    AND (content ILIKE ? OR summary ILIKE ?)
-                ORDER BY sequence_number DESC
-                LIMIT ?
-            """,
-                (conversation_id, f"%{query}%", f"%{query}%", limit),
-            )
+            if regex:
+                # For regex search, get all nodes and filter in Python
+                result = conn.execute(
+                    """
+                    SELECT
+                        node_id, conversation_id, node_type, content, timestamp,
+                        sequence_number, line_count, level, summary, summary_metadata,
+                        parent_summary_node_id, tokens_used, expandable,
+                        ai_components, topics, embedding, relates_to_node_id
+                    FROM nodes
+                    WHERE conversation_id = ?
+                    ORDER BY sequence_number DESC
+                    """,
+                    (conversation_id,),
+                )
+            else:
+                # For exact search, use SQL ILIKE for efficiency
+                result = conn.execute(
+                    """
+                    SELECT
+                        node_id, conversation_id, node_type, content, timestamp,
+                        sequence_number, line_count, level, summary, summary_metadata,
+                        parent_summary_node_id, tokens_used, expandable,
+                        ai_components, topics, embedding, relates_to_node_id
+                    FROM nodes
+                    WHERE conversation_id = ?
+                        AND (content ILIKE ? OR summary ILIKE ?)
+                    ORDER BY sequence_number DESC
+                    LIMIT ?
+                    """,
+                    (conversation_id, f"%{query}%", f"%{query}%", limit),
+                )
 
             nodes = self._rows_to_nodes(result)
             search_results = []
+            
+            # Compile regex pattern if using regex mode
+            compiled_pattern = None
+            if regex:
+                try:
+                    compiled_pattern = re.compile(query, re.IGNORECASE)
+                except re.error as e:
+                    # Invalid regex pattern, return empty results
+                    return []
+
+            matches_found = 0
             for node in nodes:
-                content_matches = query.lower() in node.content.lower()
-                summary_matches = node.summary and query.lower() in node.summary.lower()
+                if regex and compiled_pattern:
+                    # Use regex matching
+                    content_matches = bool(compiled_pattern.search(node.content))
+                    summary_matches = node.summary and bool(compiled_pattern.search(node.summary))
+                else:
+                    # Use exact substring matching
+                    content_matches = query.lower() in node.content.lower()
+                    summary_matches = node.summary and query.lower() in node.summary.lower()
+
+                # Skip nodes that don't match
+                if not content_matches and not summary_matches:
+                    continue
 
                 relevance_score = (
                     0.8 if content_matches else 0.4 if summary_matches else 0.2
@@ -277,6 +316,10 @@ class DuckDBStorage:
                         matched_text=query,
                     )
                 )
+
+                matches_found += 1
+                if matches_found >= limit:
+                    break
 
             return search_results
 

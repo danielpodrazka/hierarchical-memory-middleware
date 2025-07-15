@@ -585,7 +585,7 @@ async def test_find_successful(mock_config, sample_search_result):
         results = await manager.find("test query", limit=5)
 
         mock_search.assert_called_once_with(
-            conversation_id="test-conv-1", query="test query", limit=5
+            conversation_id="test-conv-1", query="test query", limit=5, regex=False
         )
 
         assert len(results) == 1
@@ -652,6 +652,149 @@ async def test_find_response_format(mock_config):
         assert "timestamp" in result
         assert "node_type" in result
 
+
+
+@pytest.mark.asyncio
+async def test_find_with_regex_false(mock_config, sample_search_result):
+    """Test find method with regex=False (default behavior)."""
+    manager = HierarchicalConversationManager(mock_config)
+    manager.conversation_id = "test-conv-1"
+
+    with patch.object(
+        manager.storage, "search_nodes", new_callable=AsyncMock
+    ) as mock_search:
+        mock_search.return_value = [sample_search_result]
+
+        results = await manager.find("test query", limit=5, regex=False)
+
+        mock_search.assert_called_once_with(
+            conversation_id="test-conv-1", query="test query", limit=5, regex=False
+        )
+
+        assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_find_with_regex_true(mock_config, sample_search_result):
+    """Test find method with regex=True."""
+    manager = HierarchicalConversationManager(mock_config)
+    manager.conversation_id = "test-conv-1"
+
+    with patch.object(
+        manager.storage, "search_nodes", new_callable=AsyncMock
+    ) as mock_search:
+        mock_search.return_value = [sample_search_result]
+
+        results = await manager.find(r"\d+", limit=10, regex=True)
+
+        mock_search.assert_called_once_with(
+            conversation_id="test-conv-1", query=r"\d+", limit=10, regex=True
+        )
+
+        assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_find_regex_default_parameter(mock_config, sample_search_result):
+    """Test that regex parameter defaults to False."""
+    manager = HierarchicalConversationManager(mock_config)
+    manager.conversation_id = "test-conv-1"
+
+    with patch.object(
+        manager.storage, "search_nodes", new_callable=AsyncMock
+    ) as mock_search:
+        mock_search.return_value = [sample_search_result]
+
+        # Call without regex parameter
+        results = await manager.find("test query")
+
+        # Should default to regex=False
+        mock_search.assert_called_once_with(
+            conversation_id="test-conv-1", query="test query", limit=10, regex=False
+        )
+
+        assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_find_regex_with_different_patterns(mock_config):
+    """Test find method with various regex patterns."""
+    manager = HierarchicalConversationManager(mock_config)
+    manager.conversation_id = "test-conv-1"
+
+    # Create multiple test search results
+    email_node = ConversationNode(
+        node_id=1,
+        conversation_id="test-conv-1",
+        node_type=NodeType.USER,
+        content="My email is john@example.com",
+        timestamp=datetime.now(),
+        sequence_number=1,
+        line_count=1,
+    )
+
+    phone_node = ConversationNode(
+        node_id=2,
+        conversation_id="test-conv-1",
+        node_type=NodeType.AI,
+        content="Call me at 123-456-7890",
+        timestamp=datetime.now(),
+        sequence_number=2,
+        line_count=1,
+    )
+
+    email_result = SearchResult(
+        node=email_node, relevance_score=0.9, match_type="content", matched_text="john@example.com"
+    )
+
+    phone_result = SearchResult(
+        node=phone_node, relevance_score=0.85, match_type="content", matched_text="123-456-7890"
+    )
+
+    with patch.object(
+        manager.storage, "search_nodes", new_callable=AsyncMock
+    ) as mock_search:
+        # Test email regex
+        mock_search.return_value = [email_result]
+        results = await manager.find(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", regex=True)
+
+        mock_search.assert_called_with(
+            conversation_id="test-conv-1", 
+            query=r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", 
+            limit=10, 
+            regex=True
+        )
+
+        assert len(results) == 1
+        assert "email" in results[0]["content"].lower()
+
+        # Test phone number regex
+        mock_search.return_value = [phone_result]
+        results = await manager.find(r"\d{3}-\d{3}-\d{4}", regex=True)
+
+        assert len(results) == 1
+        assert "123-456-7890" in results[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_find_regex_handles_invalid_patterns(mock_config):
+    """Test find method gracefully handles invalid regex patterns."""
+    manager = HierarchicalConversationManager(mock_config)
+    manager.conversation_id = "test-conv-1"
+
+    with patch.object(
+        manager.storage, "search_nodes", new_callable=AsyncMock
+    ) as mock_search:
+        # Return empty list for invalid regex (handled by storage layer)
+        mock_search.return_value = []
+
+        results = await manager.find("[invalid regex", regex=True)
+
+        mock_search.assert_called_once_with(
+            conversation_id="test-conv-1", query="[invalid regex", limit=10, regex=True
+        )
+
+        assert results == []
 
 @pytest.mark.asyncio
 async def test_get_conversation_summary_without_conversation(mock_config):

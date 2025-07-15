@@ -347,14 +347,14 @@ class HierarchicalConversationManager:
             logger.error(f"Error getting conversation summary: {str(e)}", exc_info=True)
             return {"error": str(e)}
 
-    async def find(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def find(self, query: str, limit: int = 10, regex: bool = False) -> List[Dict[str, Any]]:
         """Search conversation memory."""
         if not self.conversation_id:
             return []
 
         try:
             results = await self.storage.search_nodes(
-                conversation_id=self.conversation_id, query=query, limit=limit
+                conversation_id=self.conversation_id, query=query, limit=limit, regex=regex
             )
 
             return [
