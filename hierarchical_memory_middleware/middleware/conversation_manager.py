@@ -18,8 +18,8 @@ from pydantic_ai.mcp import MCPServerStreamableHTTP
 from ..config import Config
 from ..storage import DuckDBStorage
 from ..compression import SimpleCompressor, CompressionManager
-from ..advanced_hierarchy import AdvancedCompressionManager, HierarchyThresholds
-from ..models import CompressionLevel, NodeType
+from ..advanced_hierarchy import AdvancedCompressionManager
+from ..models import CompressionLevel, NodeType, HierarchyThresholds
 
 
 logger = logging.getLogger(__name__)
@@ -206,8 +206,8 @@ class HierarchicalConversationManager:
                 limit=self.config.recent_node_limit,
             )
 
-            # Get the most recent compressed nodes
-            compressed_nodes = await self.storage.get_recent_compressed_nodes(
+            # Get the most recent compressed nodes from all hierarchy levels (SUMMARY, META, ARCHIVE)
+            compressed_nodes = await self.storage.get_recent_hierarchical_nodes(
                 conversation_id=self.conversation_id,
                 limit=max(
                     1, self.config.summary_threshold - self.config.recent_node_limit

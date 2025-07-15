@@ -1,6 +1,6 @@
 """Data models for hierarchical memory system."""
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 from enum import Enum
 import json
@@ -109,3 +109,39 @@ class SearchResult(BaseModel):
     relevance_score: float
     match_type: str  # 'content', 'summary', 'topic'
     matched_text: str
+
+
+class HierarchyThresholds(BaseModel):
+    """Thresholds for different compression levels in the advanced hierarchy system."""
+    
+    # Number of nodes that trigger compression to next level
+    summary_threshold: int = 10  # Recent nodes before compression starts
+    meta_threshold: int = 50     # Summary nodes before META grouping
+    archive_threshold: int = 200  # META groups before ARCHIVE
+    
+    # Group sizes for META level compression
+    meta_group_size: int = 20    # Minimum nodes per META group
+    meta_group_max: int = 40     # Maximum nodes per META group
+
+
+class MetaGroup(BaseModel):
+    """Represents a group of nodes compressed into META level."""
+    
+    start_node_id: int
+    end_node_id: int
+    start_sequence: int
+    end_sequence: int
+    node_count: int
+    total_lines: int
+    main_topics: List[str] = Field(default_factory=list)
+    summary: str
+    timestamp_range: Tuple[datetime, datetime]
+    compression_level: CompressionLevel = CompressionLevel.META
+
+    @field_validator("timestamp_range", mode="before")
+    @classmethod
+    def parse_timestamp_range(cls, v):
+        """Ensure timestamp_range is properly parsed."""
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            return (v[0], v[1])
+        return v
