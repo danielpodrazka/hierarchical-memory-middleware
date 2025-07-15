@@ -191,7 +191,9 @@ class HierarchicalConversationManager:
             # Get the most recent compressed nodes
             compressed_nodes = await self.storage.get_recent_compressed_nodes(
                 conversation_id=self.conversation_id,
-                limit=5,  # Get exactly the 5 most recent compressed nodes
+                limit=max(
+                    1, self.config.summary_threshold - self.config.recent_node_limit
+                ),
             )
 
             # Initialize AI view data
