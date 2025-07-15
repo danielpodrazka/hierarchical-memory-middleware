@@ -119,7 +119,7 @@ async def test_compress_node(storage):
     # Verify compression
     node = await storage.get_node(ai_node.node_id, conversation_id)
     assert node.level == CompressionLevel.SUMMARY
-    assert node.summary == "Brief explanation of machine learning... (1 lines)"
+    assert node.summary == "ID 2: Brief explanation of machine learning... (1 lines)"
     assert node.summary_metadata["compression_method"] == "test"
 
 
