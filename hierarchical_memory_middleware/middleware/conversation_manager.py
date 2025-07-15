@@ -126,12 +126,34 @@ class HierarchicalConversationManager:
             return ModelResponse(parts=[TextPart(content=content)])
 
 
+    def _has_active_tool_calls(self, messages: List[ModelMessage]) -> bool:
+        """Check if there are active tool calls in progress that we shouldn't interfere with."""
+        # Look for recent tool calls or tool results that suggest active tool execution
+        recent_messages = messages[-3:] if len(messages) > 3 else messages
+        
+        for msg in recent_messages:
+            if isinstance(msg, ModelResponse):
+                for part in msg.parts:
+                    # Check for tool call parts by looking at part_kind attribute
+                    part_kind = getattr(part, 'part_kind', None)
+                    if part_kind in ['tool-call', 'tool-return']:
+                        return True
+                    # Also check attributes as backup
+                    if hasattr(part, 'tool_name') and (hasattr(part, 'args') or hasattr(part, 'content')):
+                        return True
+        return False
+
     async def _hierarchical_memory_processor(
         self, messages: List[ModelMessage]
     ) -> List[ModelMessage]:
         """Process message history using hierarchical memory system."""
         if not self.conversation_id:
             # No conversation started yet, return messages as-is
+            return messages
+
+        # CRITICAL: If there are active tool calls, don't interfere with the flow
+        if self._has_active_tool_calls(messages):
+            logger.debug("Active tool calls detected, skipping memory processing")
             return messages
 
         try:

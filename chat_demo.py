@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Fixed conversation ID for testing (so you can restart and resume)
-TEST_CONVERSATION_ID = "d34ba4f3-8a4c-493a-8f47-02ebddfea767"
+TEST_CONVERSATION_ID = "3d1fe944-ea9d-4b48-a311-0852171f953c"
 
 
 class ChatTester:
