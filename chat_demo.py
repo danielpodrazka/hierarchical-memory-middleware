@@ -107,17 +107,18 @@ class ChatTester:
                 print(f"\n📜 Recent messages:")
                 for i, result in enumerate(results[:limit], 1):
                     node_type = result["node_type"]
-                    content = result["content"]
+                    # Use summary if available (for compressed nodes), otherwise use content
+                    display_text = result.get("summary") or result["content"]
                     timestamp = result["timestamp"]
                     node_id = result.get("node_id", "unknown")
 
                     # Truncate long content
-                    if len(content) > 100:
-                        content = content[:97] + "..."
+                    if len(display_text) > 500:
+                        display_text = display_text[:500] + "..."
 
                     icon = "👤" if node_type == "user" else "🤖"
                     print(
-                        f"   {i}. {icon} [Node {node_id}] [{timestamp[:16]}] {content}"
+                        f"   {i}. {icon} [Node {node_id}] [{timestamp[:16]}] {display_text}"
                     )
         except Exception as e:
             print(f"❌ Error getting recent messages: {e}")
@@ -135,12 +136,15 @@ class ChatTester:
             print(f"   Found {len(results)} results:")
             for i, result in enumerate(results, 1):
                 node_type = result["node_type"]
-                content = result["content"]
+                # Use summary if available (for compressed nodes), otherwise use content
+                display_text = result.get("summary") or result["content"]
                 score = result["relevance_score"]
                 node_id = result.get("node_id", "unknown")
 
                 icon = "👤" if node_type == "user" else "🤖"
-                print(f"   {i}. {icon} [Node {node_id}] (score: {score:.2f}) {content}")
+                print(
+                    f"   {i}. {icon} [Node {node_id}] (score: {score:.2f}) {display_text}"
+                )
 
         except Exception as e:
             print(f"❌ Error searching: {e}")
