@@ -185,15 +185,14 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 - [x] PyArrow storage optimization with Pydantic field validators ✅
 - [x] Basic conversation manager with PydanticAI integration
 - [x] CLI interface testing and validation
-- [ ] End-to-end integration tests
+
 
 ### Phase 2: MCP Integration
 - [x] MCP server for memory browsing
 - [x] read-only tool `expand(idx:int)`: just expanding single nodes
 - [x] MCP server+client setup using pydanticAI that integrates the MCP and the middleware
 
-### Phase 3: AI Summarization
-- [ ] AI summarization of nodes
+### Phase 3
 - [x] Automatic compression triggers
 - [x] New tool `find(text:str)` (regex search across all nodes or from A node to B node)
 
@@ -208,14 +207,14 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 
 ### Phase 5: Semantic search
 - [ ] New tool+storage to support semantic search with embeddings
+- [ ] tf-idf keywords included in the compressed nodes overview
 
-### Phase 6: Performance optimization 
-- [ ] Move compression triggers to the background if not already done in background
 
-### Phase 7: Production Ready
+### Phase 6: Production Ready
 - [ ] Documentation
 - [ ] Deployment packages
 - [ ] Example applications
+- [ ] End-to-end integration tests
 
 ## Success Metrics
 
