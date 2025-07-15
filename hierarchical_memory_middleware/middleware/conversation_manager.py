@@ -1,5 +1,6 @@
 """Main conversation manager for hierarchical memory system."""
 
+import json
 import uuid
 import logging
 from typing import Optional, List, Dict, Any
@@ -57,6 +58,9 @@ class HierarchicalConversationManager:
             mcp_server = MCPServerStreamableHTTP(
                 url=mcp_server_url,
                 tool_prefix="memory",  # Prefix tools with 'memory_'
+                process_tool_call=self._log_tool_call
+                if config.log_tool_calls
+                else None,
             )
             mcp_servers.append(mcp_server)
 
@@ -77,6 +81,31 @@ class HierarchicalConversationManager:
             f"Initialized HierarchicalConversationManager with model: {config.work_model}"
             + (" and MCP tools" if self.has_mcp_tools else "")
         )
+
+    async def _log_tool_call(
+        self, ctx, call_tool, tool_name: str, args: Dict[str, Any]
+    ):
+        """Custom tool call processor that logs everything"""
+        logger.info(f"🔧 TOOL CALL: {tool_name}")
+        logger.info(f"📥 ARGS: {json.dumps(args, indent=2)}")
+
+        try:
+            # Call the actual tool
+            result = await call_tool(tool_name, args)
+
+            # Log the result (truncate if too long)
+            result_str = str(result)
+            if len(result_str) > 500:
+                result_str = result_str[:500] + "... (truncated)"
+
+            logger.info(f"📤 RESULT: {result_str}")
+            logger.info(f"✅ TOOL CALL COMPLETED: {tool_name}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ TOOL CALL FAILED: {tool_name} - {str(e)}")
+            raise
 
     async def _hierarchical_memory_processor(
         self, messages: List[ModelMessage]

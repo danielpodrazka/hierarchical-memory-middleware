@@ -29,6 +29,7 @@ class Config:
     # MCP server
     mcp_port: int = 8000
     enable_mcp_tools: bool = True
+    log_tool_calls: bool = True
 
     @classmethod
     def from_env(cls, env_file: Optional[str] = ".env") -> "Config":
