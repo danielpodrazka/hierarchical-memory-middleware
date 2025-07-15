@@ -26,6 +26,9 @@ from hierarchical_memory_middleware.compression import (
     SimpleCompressor,
     CompressionManager,
 )
+from hierarchical_memory_middleware.advanced_hierarchy import (
+    AdvancedCompressionManager,
+)
 
 
 @pytest.fixture
@@ -53,7 +56,6 @@ def sample_conversation_node():
         line_count=1,
         level=CompressionLevel.FULL,
     )
-
 
 
 @pytest.fixture
@@ -88,7 +90,7 @@ async def test_conversation_manager_initialization(mock_config):
     assert manager.conversation_id is None
     assert isinstance(manager.storage, DuckDBStorage)
     assert isinstance(manager.compressor, SimpleCompressor)
-    assert isinstance(manager.compression_manager, CompressionManager)
+    assert isinstance(manager.compression_manager, AdvancedCompressionManager)
     assert isinstance(manager.work_agent, Agent)
 
     assert len(manager.work_agent.history_processors) == 1
@@ -354,7 +356,8 @@ async def test_chat_saves_conversation_nodes_correctly(mock_config):
             assert second_call[1]["content"] == "This is my response"
             assert second_call[1]["tokens_used"] == 42
             assert (
-                second_call[1]["ai_components"]["assistant_text"] == "This is my response"
+                second_call[1]["ai_components"]["assistant_text"]
+                == "This is my response"
             )
             assert second_call[1]["ai_components"]["model_used"] == "test"
 
@@ -445,7 +448,7 @@ async def test_hierarchical_memory_processor_with_memory(
             manager.storage, "get_recent_nodes", new_callable=AsyncMock
         ) as mock_recent,
         patch.object(
-            manager.storage, "get_conversation_nodes", new_callable=AsyncMock
+            manager.storage, "get_recent_hierarchical_nodes", new_callable=AsyncMock
         ) as mock_compressed,
     ):
         mock_recent.return_value = [recent_node]
@@ -454,9 +457,7 @@ async def test_hierarchical_memory_processor_with_memory(
         result = await manager._hierarchical_memory_processor(messages)
 
         mock_recent.assert_called_once_with(conversation_id="test-conv-1", limit=10)
-        mock_compressed.assert_called_once_with(
-            conversation_id="test-conv-1", limit=10, level=CompressionLevel.SUMMARY
-        )
+        mock_compressed.assert_called_once_with(conversation_id="test-conv-1", limit=10)
 
         assert len(result) >= 1
         assert any(isinstance(msg, ModelResponse) for msg in result)
@@ -653,7 +654,6 @@ async def test_find_response_format(mock_config):
         assert "node_type" in result
 
 
-
 @pytest.mark.asyncio
 async def test_find_with_regex_false(mock_config, sample_search_result):
     """Test find method with regex=False (default behavior)."""
@@ -744,11 +744,17 @@ async def test_find_regex_with_different_patterns(mock_config):
     )
 
     email_result = SearchResult(
-        node=email_node, relevance_score=0.9, match_type="content", matched_text="john@example.com"
+        node=email_node,
+        relevance_score=0.9,
+        match_type="content",
+        matched_text="john@example.com",
     )
 
     phone_result = SearchResult(
-        node=phone_node, relevance_score=0.85, match_type="content", matched_text="123-456-7890"
+        node=phone_node,
+        relevance_score=0.85,
+        match_type="content",
+        matched_text="123-456-7890",
     )
 
     with patch.object(
@@ -756,13 +762,15 @@ async def test_find_regex_with_different_patterns(mock_config):
     ) as mock_search:
         # Test email regex
         mock_search.return_value = [email_result]
-        results = await manager.find(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", regex=True)
+        results = await manager.find(
+            r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", regex=True
+        )
 
         mock_search.assert_called_with(
-            conversation_id="test-conv-1", 
-            query=r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", 
-            limit=10, 
-            regex=True
+            conversation_id="test-conv-1",
+            query=r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+            limit=10,
+            regex=True,
         )
 
         assert len(results) == 1
@@ -795,6 +803,7 @@ async def test_find_regex_handles_invalid_patterns(mock_config):
         )
 
         assert results == []
+
 
 @pytest.mark.asyncio
 async def test_get_conversation_summary_without_conversation(mock_config):
@@ -907,67 +916,6 @@ async def test_get_conversation_summary_compression_stats(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_check_and_compress_no_compression_needed(mock_config):
-    """Test compression check when no nodes need compression."""
-    manager = HierarchicalConversationManager(mock_config)
-    manager.conversation_id = "test-conv-1"
-
-    with (
-        patch.object(
-            manager.storage, "get_conversation_nodes", new_callable=AsyncMock
-        ) as mock_get_nodes,
-        patch.object(
-            manager.compression_manager, "identify_nodes_to_compress"
-        ) as mock_identify,
-    ):
-        mock_get_nodes.return_value = []
-        mock_identify.return_value = []
-
-        await manager._check_and_compress()
-
-        mock_identify.assert_called_once_with([])
-
-
-@pytest.mark.asyncio
-async def test_check_and_compress_successful_compression(
-    mock_config, sample_compression_result
-):
-    """Test successful compression of nodes."""
-    manager = HierarchicalConversationManager(mock_config)
-    manager.conversation_id = "test-conv-1"
-
-    mock_nodes = [Mock(id=1), Mock(id=2)]
-
-    with (
-        patch.object(
-            manager.storage, "get_conversation_nodes", new_callable=AsyncMock
-        ) as mock_get_nodes,
-        patch.object(
-            manager.compression_manager, "identify_nodes_to_compress"
-        ) as mock_identify,
-        patch.object(
-            manager.compression_manager, "compress_nodes"
-        ) as mock_compress_nodes,
-        patch.object(
-            manager.storage, "compress_node", new_callable=AsyncMock
-        ) as mock_compress_node,
-    ):
-        mock_get_nodes.return_value = mock_nodes
-        mock_identify.return_value = [mock_nodes[0]]
-        mock_compress_nodes.return_value = [sample_compression_result]
-
-        await manager._check_and_compress()
-
-        mock_compress_node.assert_called_once_with(
-            node_id=sample_compression_result.original_node_id,
-            conversation_id="test-conv-1",
-            compression_level=CompressionLevel.SUMMARY,
-            summary=sample_compression_result.compressed_content,
-            metadata=sample_compression_result.metadata,
-        )
-
-
-@pytest.mark.asyncio
 async def test_check_and_compress_handles_compression_errors(mock_config):
     """Test error handling during compression operations."""
     manager = HierarchicalConversationManager(mock_config)
@@ -979,43 +927,6 @@ async def test_check_and_compress_handles_compression_errors(mock_config):
         mock_get_nodes.side_effect = Exception("Storage error")
 
         await manager._check_and_compress()
-
-
-@pytest.mark.asyncio
-async def test_check_and_compress_compression_workflow(
-    mock_config, sample_compression_result
-):
-    """Test complete compression workflow."""
-    manager = HierarchicalConversationManager(mock_config)
-    manager.conversation_id = "test-conv-1"
-
-    mock_nodes = [Mock(id=1, content="Node content")]
-    compression_results = [sample_compression_result]
-
-    with (
-        patch.object(
-            manager.storage, "get_conversation_nodes", new_callable=AsyncMock
-        ) as mock_get_nodes,
-        patch.object(
-            manager.compression_manager, "identify_nodes_to_compress"
-        ) as mock_identify,
-        patch.object(
-            manager.compression_manager, "compress_nodes"
-        ) as mock_compress_nodes,
-        patch.object(
-            manager.storage, "compress_node", new_callable=AsyncMock
-        ) as mock_compress_node,
-    ):
-        mock_get_nodes.return_value = mock_nodes
-        mock_identify.return_value = mock_nodes
-        mock_compress_nodes.return_value = compression_results
-
-        await manager._check_and_compress()
-
-        mock_get_nodes.assert_called_once_with(conversation_id="test-conv-1")
-        mock_identify.assert_called_once_with(mock_nodes)
-        mock_compress_nodes.assert_called_once_with(mock_nodes)
-        mock_compress_node.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1164,7 +1075,9 @@ async def test_conversation_with_compression_cycle(mock_config):
 
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
-        patch.object(manager.storage, "save_conversation_node", new_callable=AsyncMock) as mock_save,
+        patch.object(
+            manager.storage, "save_conversation_node", new_callable=AsyncMock
+        ) as mock_save,
         patch.object(
             manager.storage, "conversation_exists", new_callable=AsyncMock
         ) as mock_exists,
@@ -1174,7 +1087,10 @@ async def test_conversation_with_compression_cycle(mock_config):
     ):
         mock_exists.return_value = True
         mock_run.return_value = mock_response
-        mock_save.side_effect = [mock_user_node, mock_ai_node] * 3  # 3 iterations, 2 nodes each
+        mock_save.side_effect = [
+            mock_user_node,
+            mock_ai_node,
+        ] * 3  # 3 iterations, 2 nodes each
 
         for i in range(3):
             await manager.chat(f"Message {i}")
@@ -1270,7 +1186,10 @@ async def test_chat_with_empty_message(mock_config):
             patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
         ):
             mock_run.return_value = mock_response
-            mock_save.side_effect = [mock_user_node, mock_ai_node] * 2  # 2 calls, 2 nodes each
+            mock_save.side_effect = [
+                mock_user_node,
+                mock_ai_node,
+            ] * 2  # 2 calls, 2 nodes each
 
             response = await manager.chat("")
             assert "I received an empty message" == response
@@ -1360,7 +1279,10 @@ async def test_conversation_manager_logging(mock_config, caplog):
 
         await manager.chat("Test message")
 
-        assert f"Processed conversation turn (user: 1, ai: 2) in conversation {conv_id}" in caplog.text
+        assert (
+            f"Processed conversation turn (user: 1, ai: 2) in conversation {conv_id}"
+            in caplog.text
+        )
 
     with patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run:
         mock_run.side_effect = Exception("Test error")

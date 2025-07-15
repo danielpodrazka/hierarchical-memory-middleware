@@ -323,6 +323,26 @@ class AdvancedCompressionManager:
         """Initialize the advanced compression manager."""
         self.hierarchy_manager = AdvancedHierarchyManager(base_compressor, thresholds)
 
+    # Backward compatibility properties and methods for old CompressionManager interface
+    @property
+    def recent_node_limit(self) -> int:
+        """Get the recent node limit from thresholds for backward compatibility."""
+        return self.hierarchy_manager.thresholds.summary_threshold
+
+    def identify_nodes_to_compress(
+        self, nodes: List[ConversationNode]
+    ) -> List[ConversationNode]:
+        """Identify nodes that need compression (backward compatibility)."""
+        compression_needs = self.hierarchy_manager.analyze_compression_needs(nodes)
+        # Return nodes that need compression to SUMMARY level
+        return compression_needs.get(CompressionLevel.SUMMARY, [])
+
+    def compress_nodes(
+        self, nodes: List[ConversationNode]
+    ) -> List[CompressionResult]:
+        """Compress nodes using SUMMARY level compression (backward compatibility)."""
+        return self.hierarchy_manager.compress_to_summary(nodes)
+
     async def process_hierarchy_compression(
         self, nodes: List[ConversationNode], storage
     ) -> Dict[str, Any]:
