@@ -75,6 +75,7 @@ class MemoryMCPServer:
                 logger.error(f"Error setting conversation ID: {str(e)}", exc_info=True)
                 return {"error": f"Failed to set conversation ID: {str(e)}"}
 
+        @self.mcp.tool()
         async def expand_node(node_id: int) -> Dict[str, Any]:
             """Retrieve full content of a conversation node by composite ID.
 
@@ -207,6 +208,23 @@ class MemoryMCPServer:
                     f"Error getting conversation stats: {str(e)}", exc_info=True
                 )
                 return {"error": f"Failed to get conversation stats: {str(e)}"}
+
+    async def start_conversation(self, conversation_id: Optional[str] = None) -> str:
+        """Start or resume a conversation for the MCP server.
+        
+        This method automatically sets the conversation_id state, so tools
+        can be used immediately after calling this method.
+        """
+        # Start/resume the conversation
+        result_conversation_id = await self.conversation_manager.start_conversation(conversation_id)
+        
+        # Automatically set the conversation_id state for tools
+        self.current_conversation_id = result_conversation_id
+        self.conversation_manager.conversation_id = result_conversation_id
+        
+        logger.info(f"Started conversation and set conversation_id to: {result_conversation_id}")
+        
+        return result_conversation_id
 
     def run(
         self,
