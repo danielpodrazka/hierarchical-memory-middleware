@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 
 from hierarchical_memory_middleware.config import Config
 from hierarchical_memory_middleware.middleware.conversation_manager import (
@@ -84,7 +83,9 @@ class ChatTester:
         # Set up conversation JSON file for real-time viewing
         conversations_dir = ".conversations"
         os.makedirs(conversations_dir, exist_ok=True)
-        self.conversation_json_path = os.path.join(conversations_dir, f"{self.conversation_id}.json")
+        self.conversation_json_path = os.path.join(
+            conversations_dir, f"{self.conversation_id}.json"
+        )
         print(f"📄 Real-time conversation JSON: {self.conversation_json_path}")
 
         if self.conversation_id == TEST_CONVERSATION_ID:
@@ -239,7 +240,7 @@ class ChatTester:
             }
 
             # Write to temporary file with nice formatting
-            with open(self.conversation_json_path, 'w', encoding='utf-8') as f:
+            with open(self.conversation_json_path, "w", encoding="utf-8") as f:
                 json.dump(conversation_data, f, indent=2, ensure_ascii=False)
 
         except Exception as e:
