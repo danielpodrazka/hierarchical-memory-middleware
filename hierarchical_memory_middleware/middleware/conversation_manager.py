@@ -80,6 +80,9 @@ class HierarchicalConversationManager:
         # Track tool calls and results during execution
         self._current_tool_calls = []
         self._current_tool_results = []
+        
+        # Track what the AI actually sees for debugging/visualization
+        self._last_ai_view_data = None
 
         logger.info(
             f"Initialized HierarchicalConversationManager with model: {config.work_model}"
@@ -169,6 +172,9 @@ class HierarchicalConversationManager:
         self, messages: List[ModelMessage]
     ) -> List[ModelMessage]:
         """Process message history using hierarchical memory system."""
+        # Reset AI view data
+        self._last_ai_view_data = None
+        
         if not self.conversation_id:
             # No conversation started yet, return messages as-is
             return messages
@@ -192,23 +198,46 @@ class HierarchicalConversationManager:
                 level=CompressionLevel.SUMMARY,
             )
 
+            # Initialize AI view data
+            ai_view_data = {
+                "compressed_nodes": [],
+                "recent_nodes": [],
+                "recent_messages_from_input": [],
+                "total_messages_sent_to_ai": 0,
+            }
+
             # Build message history from hierarchical memory
             memory_messages = []
 
             # Add compressed context first (older messages)
             for node in compressed_nodes[:5]:  # Limit compressed context
                 if node.node_type == NodeType.USER:
+                    content = node.summary or node.content
                     memory_messages.append(
                         ModelRequest(
-                            parts=[UserPromptPart(content=node.summary or node.content)]
+                            parts=[UserPromptPart(content=content)]
                         )
                     )
+                    ai_view_data["compressed_nodes"].append({
+                        "node_id": node.node_id,
+                        "node_type": "user",
+                        "content": content,
+                        "is_summary": bool(node.summary),
+                        "sequence_number": node.sequence_number,
+                    })
                 elif node.node_type == NodeType.AI:
                     # Try to reconstruct full message structure for compressed nodes
                     reconstructed_msg = self._reconstruct_ai_message_from_node(
                         node, use_summary=True
                     )
                     memory_messages.append(reconstructed_msg)
+                    ai_view_data["compressed_nodes"].append({
+                        "node_id": node.node_id,
+                        "node_type": "ai",
+                        "content": node.summary or node.content,
+                        "is_summary": True,
+                        "sequence_number": node.sequence_number,
+                    })
 
             # Add recent full messages
             for node in recent_nodes[-8:]:  # Last 8 recent nodes
@@ -216,12 +245,24 @@ class HierarchicalConversationManager:
                     memory_messages.append(
                         ModelRequest(parts=[UserPromptPart(content=node.content)])
                     )
+                    ai_view_data["recent_nodes"].append({
+                        "node_id": node.node_id,
+                        "node_type": "user",
+                        "content": node.content,
+                        "sequence_number": node.sequence_number,
+                    })
                 elif node.node_type == NodeType.AI:
                     # Try to reconstruct full message structure for recent nodes
                     reconstructed_msg = self._reconstruct_ai_message_from_node(
                         node, use_summary=False
                     )
                     memory_messages.append(reconstructed_msg)
+                    ai_view_data["recent_nodes"].append({
+                        "node_id": node.node_id,
+                        "node_type": "ai",
+                        "content": node.content,
+                        "sequence_number": node.sequence_number,
+                    })
 
             logger.debug(
                 f"Memory processor: found {len(memory_messages)} memory messages, {len(messages)} incoming messages"
@@ -241,8 +282,33 @@ class HierarchicalConversationManager:
                     else messages
                 )
 
+                # Track recent messages from input
+                for msg in recent_messages:
+                    if hasattr(msg, 'parts'):
+                        # Extract content from message parts
+                        content_parts = []
+                        for part in msg.parts:
+                            if hasattr(part, 'content'):
+                                content_parts.append(part.content)
+                            elif hasattr(part, 'tool_name'):
+                                content_parts.append(f"[Tool call: {part.tool_name}]")
+                        content = " ".join(content_parts) if content_parts else str(msg)
+                    else:
+                        content = str(msg)
+                    
+                    ai_view_data["recent_messages_from_input"].append({
+                        "message_type": msg.__class__.__name__,
+                        "content": content,
+                    })
+
                 # Add recent messages without cleaning to preserve tool call flows
                 combined_messages.extend(recent_messages)
+
+                # Update total count
+                ai_view_data["total_messages_sent_to_ai"] = len(combined_messages)
+
+                # Store the AI view data
+                self._last_ai_view_data = ai_view_data
 
                 logger.debug(
                     f"Memory processor: returning {len(combined_messages)} total messages ({len(memory_messages)} from memory + {len(recent_messages)} recent)"
@@ -250,12 +316,41 @@ class HierarchicalConversationManager:
                 return combined_messages
             else:
                 # No memory yet, use provided messages as-is to preserve tool flows
+                ai_view_data["recent_messages_from_input"] = []
+                for msg in messages:
+                    if hasattr(msg, 'parts'):
+                        content_parts = []
+                        for part in msg.parts:
+                            if hasattr(part, 'content'):
+                                content_parts.append(part.content)
+                            elif hasattr(part, 'tool_name'):
+                                content_parts.append(f"[Tool call: {part.tool_name}]")
+                        content = " ".join(content_parts) if content_parts else str(msg)
+                    else:
+                        content = str(msg)
+                    
+                    ai_view_data["recent_messages_from_input"].append({
+                        "message_type": msg.__class__.__name__,
+                        "content": content,
+                    })
+                
+                ai_view_data["total_messages_sent_to_ai"] = len(messages)
+                self._last_ai_view_data = ai_view_data
                 return messages
 
         except Exception as e:
             logger.error(f"Error in history processor: {str(e)}", exc_info=True)
             # Fallback to provided messages on error to preserve tool flows
             return messages
+
+    def get_last_ai_view_data(self) -> Optional[Dict[str, Any]]:
+        """Get the last captured AI view data from the memory processor.
+        
+        Returns:
+            Dictionary containing what the AI actually saw in the last message processing,
+            or None if no data is available (e.g., no conversation started, tool calls active).
+        """
+        return self._last_ai_view_data
 
     async def start_conversation(self, conversation_id: Optional[str] = None) -> str:
         """Initialize or resume a conversation."""

@@ -19,6 +19,7 @@ from hierarchical_memory_middleware.config import Config
 from hierarchical_memory_middleware.middleware.conversation_manager import (
     HierarchicalConversationManager,
 )
+from hierarchical_memory_middleware.models import CompressionLevel, NodeType
 
 # Configure logging
 logging.basicConfig(
@@ -86,7 +87,11 @@ class ChatTester:
         self.conversation_json_path = os.path.join(
             conversations_dir, f"{self.conversation_id}.json"
         )
+        self.conversation_ai_view_json_path = os.path.join(
+            conversations_dir, f"{self.conversation_id}_ai_view.json"
+        )
         print(f"📄 Real-time conversation JSON: {self.conversation_json_path}")
+        print(f"🤖 AI view conversation JSON: {self.conversation_ai_view_json_path}")
 
         if self.conversation_id == TEST_CONVERSATION_ID:
             print("✅ Resumed existing conversation")
@@ -208,18 +213,23 @@ class ChatTester:
             print(f"   ❌ Error expanding node {node_id}: {e}")
 
     async def save_conversation_to_json(self):
-        """Save the current conversation to a JSON file for real-time viewing."""
+        """Save the current conversation to JSON files for real-time viewing.
+
+        Saves two versions:
+        1. Full conversation with all nodes
+        2. AI agent view with only what the AI actually sees
+        """
         try:
-            # Get all conversation nodes
-            nodes = await self.conversation_manager.storage.get_conversation_nodes(
+            # Get all conversation nodes for full view
+            all_nodes = await self.conversation_manager.storage.get_conversation_nodes(
                 self.conversation_id
             )
 
-            # Convert nodes to a serializable format
-            conversation_data = {
+            # 1. Save full conversation data
+            full_conversation_data = {
                 "conversation_id": self.conversation_id,
-                "total_nodes": len(nodes),
-                "last_updated": nodes[-1].timestamp.isoformat() if nodes else None,
+                "total_nodes": len(all_nodes),
+                "last_updated": all_nodes[-1].timestamp.isoformat() if all_nodes else None,
                 "nodes": [
                     {
                         "node_id": node.node_id,
@@ -235,13 +245,43 @@ class ChatTester:
                         "ai_components": node.ai_components,
                         "relates_to_node_id": node.relates_to_node_id,
                     }
-                    for node in nodes
+                    for node in all_nodes
                 ],
             }
 
-            # Write to temporary file with nice formatting
+            # Write full conversation to file
             with open(self.conversation_json_path, "w", encoding="utf-8") as f:
-                json.dump(conversation_data, f, indent=2, ensure_ascii=False)
+                json.dump(full_conversation_data, f, indent=2, ensure_ascii=False)
+
+            # 2. Get the actual AI view data from the conversation manager
+            ai_view_raw = self.conversation_manager.get_last_ai_view_data()
+            
+            if ai_view_raw:
+                # We have AI view data from the last message processing
+                ai_view_data = {
+                    "conversation_id": self.conversation_id,
+                    "description": "This shows exactly what the AI agent saw in the last message processing",
+                    "last_updated": all_nodes[-1].timestamp.isoformat() if all_nodes else None,
+                    "compressed_nodes_count": len(ai_view_raw.get("compressed_nodes", [])),
+                    "recent_nodes_count": len(ai_view_raw.get("recent_nodes", [])),
+                    "recent_messages_from_input_count": len(ai_view_raw.get("recent_messages_from_input", [])),
+                    "total_messages_sent_to_ai": ai_view_raw.get("total_messages_sent_to_ai", 0),
+                    "compressed_nodes": ai_view_raw.get("compressed_nodes", []),
+                    "recent_nodes": ai_view_raw.get("recent_nodes", []),
+                    "recent_messages_from_input": ai_view_raw.get("recent_messages_from_input", []),
+                }
+            else:
+                # No AI view data available yet (e.g., no messages processed)
+                ai_view_data = {
+                    "conversation_id": self.conversation_id,
+                    "description": "No AI view data available yet - send a message to see what the AI sees",
+                    "last_updated": all_nodes[-1].timestamp.isoformat() if all_nodes else None,
+                    "note": "The AI view is captured during message processing. It will be populated after you send a message.",
+                }
+
+            # Write AI view to file
+            with open(self.conversation_ai_view_json_path, "w", encoding="utf-8") as f:
+                json.dump(ai_view_data, f, indent=2, ensure_ascii=False)
 
         except Exception as e:
             # Don't let JSON export errors break the chat
