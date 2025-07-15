@@ -12,7 +12,6 @@ This script demonstrates:
 import asyncio
 import logging
 import sys
-from typing import Optional
 
 from hierarchical_memory_middleware.config import Config
 from hierarchical_memory_middleware.middleware.conversation_manager import (
