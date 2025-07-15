@@ -77,6 +77,10 @@ class HierarchicalConversationManager:
         self.work_agent = Agent(**agent_kwargs)
         self.has_mcp_tools = bool(mcp_servers)
 
+        # Track tool calls and results during execution
+        self._current_tool_calls = []
+        self._current_tool_results = []
+
         logger.info(
             f"Initialized HierarchicalConversationManager with model: {config.work_model}"
             + (" and MCP tools" if self.has_mcp_tools else "")
@@ -85,9 +89,17 @@ class HierarchicalConversationManager:
     async def _log_tool_call(
         self, ctx, call_tool, tool_name: str, args: Dict[str, Any]
     ):
-        """Custom tool call processor that logs everything"""
+        """Custom tool call processor that logs everything and captures tool calls/results"""
         logger.info(f"🔧 TOOL CALL: {tool_name}")
         logger.info(f"📥 ARGS: {json.dumps(args, indent=2)}")
+
+        # Generate a unique ID for this tool call
+        tool_call_id = f"tool_call_{len(self._current_tool_calls)}_{tool_name}"
+
+        # Store the tool call
+        self._current_tool_calls.append(
+            {"tool_name": tool_name, "tool_call_id": tool_call_id, "args": args}
+        )
 
         try:
             # Call the actual tool
@@ -100,6 +112,15 @@ class HierarchicalConversationManager:
 
             logger.info(f"📤 RESULT: {result_str}")
             logger.info(f"✅ TOOL CALL COMPLETED: {tool_name}")
+
+            # Store the tool result
+            self._current_tool_results.append(
+                {
+                    "tool_call_id": tool_call_id,
+                    "content": str(result),
+                    "timestamp": None,  # Could add timestamp if needed
+                }
+            )
 
             return result
 
@@ -125,21 +146,22 @@ class HierarchicalConversationManager:
             content = node.summary if use_summary else node.content
             return ModelResponse(parts=[TextPart(content=content)])
 
-
     def _has_active_tool_calls(self, messages: List[ModelMessage]) -> bool:
         """Check if there are active tool calls in progress that we shouldn't interfere with."""
         # Look for recent tool calls or tool results that suggest active tool execution
         recent_messages = messages[-3:] if len(messages) > 3 else messages
-        
+
         for msg in recent_messages:
             if isinstance(msg, ModelResponse):
                 for part in msg.parts:
                     # Check for tool call parts by looking at part_kind attribute
-                    part_kind = getattr(part, 'part_kind', None)
-                    if part_kind in ['tool-call', 'tool-return']:
+                    part_kind = getattr(part, "part_kind", None)
+                    if part_kind in ["tool-call", "tool-return"]:
                         return True
                     # Also check attributes as backup
-                    if hasattr(part, 'tool_name') and (hasattr(part, 'args') or hasattr(part, 'content')):
+                    if hasattr(part, "tool_name") and (
+                        hasattr(part, "args") or hasattr(part, "content")
+                    ):
                         return True
         return False
 
@@ -257,12 +279,65 @@ class HierarchicalConversationManager:
 
         return self.conversation_id
 
+    def _extract_tool_calls(self, response) -> List[Dict[str, Any]]:
+        """Return tool calls captured during execution."""
+        # Return the tool calls that were captured during execution
+        return self._current_tool_calls.copy()
+
+    def _extract_tool_results(self, response) -> List[Dict[str, Any]]:
+        """Return tool results captured during execution."""
+        # Return the tool results that were captured during execution
+        return self._current_tool_results.copy()
+
+    def _build_comprehensive_content(self, response) -> str:
+        """Build comprehensive content including tool calls, results, and final response."""
+        content_parts = []
+
+        # Extract tool calls and results
+        tool_calls = self._extract_tool_calls(response)
+        tool_results = self._extract_tool_results(response)
+
+        # Add tool calls to content
+        if tool_calls:
+            content_parts.append("=== TOOL CALLS ===")
+            for i, call in enumerate(tool_calls, 1):
+                content_parts.append(f"Tool Call {i}:")
+                content_parts.append(f"  Name: {call['tool_name']}")
+                content_parts.append(f"  ID: {call['tool_call_id']}")
+                if call["args"]:
+                    content_parts.append(
+                        f"  Arguments: {json.dumps(call['args'], indent=4)}"
+                    )
+                content_parts.append("")
+
+        # Add tool results to content
+        if tool_results:
+            content_parts.append("=== TOOL RESULTS ===")
+            for i, result in enumerate(tool_results, 1):
+                content_parts.append(f"Tool Result {i}:")
+                content_parts.append(f"  Call ID: {result['tool_call_id']}")
+                content_parts.append(f"  Content: {result['content']}")
+                if result["timestamp"]:
+                    content_parts.append(f"  Timestamp: {result['timestamp']}")
+                content_parts.append("")
+
+        # Add the final assistant response
+        if content_parts:  # Only add separator if there were tool calls/results
+            content_parts.append("=== ASSISTANT RESPONSE ===")
+        content_parts.append(response.output)
+
+        return "\n".join(content_parts)
+
     async def chat(self, user_message: str) -> str:
         """Main conversation interface with hierarchical memory integration."""
         if not self.conversation_id:
             raise ValueError("No active conversation. Call start_conversation() first.")
 
         try:
+            # Clear tool tracking for new conversation turn
+            self._current_tool_calls = []
+            self._current_tool_results = []
+
             # Generate AI response using PydanticAI with history processor
             # The history processor will automatically manage conversation memory
             if self.has_mcp_tools:
@@ -296,14 +371,19 @@ class HierarchicalConversationManager:
                 logger.debug(f"Could not extract token usage: {e}")
                 tokens_used = None
 
+            # Build comprehensive content including tool calls and results
+            comprehensive_content = self._build_comprehensive_content(response)
+
             ai_node = await self.storage.save_conversation_node(
                 conversation_id=self.conversation_id,
                 node_type=NodeType.AI,
-                content=response.output,
+                content=comprehensive_content,
                 tokens_used=tokens_used,
                 ai_components={
                     "assistant_text": response.output,
                     "model_used": self.config.work_model,
+                    "tool_calls": self._extract_tool_calls(response),
+                    "tool_results": self._extract_tool_results(response),
                 },
             )
 
@@ -347,14 +427,19 @@ class HierarchicalConversationManager:
             logger.error(f"Error getting conversation summary: {str(e)}", exc_info=True)
             return {"error": str(e)}
 
-    async def find(self, query: str, limit: int = 10, regex: bool = False) -> List[Dict[str, Any]]:
+    async def find(
+        self, query: str, limit: int = 10, regex: bool = False
+    ) -> List[Dict[str, Any]]:
         """Search conversation memory."""
         if not self.conversation_id:
             return []
 
         try:
             results = await self.storage.search_nodes(
-                conversation_id=self.conversation_id, query=query, limit=limit, regex=regex
+                conversation_id=self.conversation_id,
+                query=query,
+                limit=limit,
+                regex=regex,
             )
 
             return [
