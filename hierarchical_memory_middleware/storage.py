@@ -82,7 +82,9 @@ class DuckDBStorage:
 
             return self._rows_to_nodes(result)
 
-    async def get_node(self, node_id: int, conversation_id: str) -> Optional[ConversationNode]:
+    async def get_node(
+        self, node_id: int, conversation_id: str
+    ) -> Optional[ConversationNode]:
         """Get a specific node by composite primary key."""
         with self._get_connection() as conn:
             result = conn.execute(
@@ -133,7 +135,7 @@ class DuckDBStorage:
             node_id = node_id_result[0] if node_id_result else 1
 
             # Calculate line count
-            line_count = len(content.split('\n'))
+            line_count = len(content.split("\n"))
 
             # Insert the new node
             conn.execute(
@@ -251,10 +253,10 @@ class DuckDBStorage:
             params = [conversation_id, CompressionLevel.SUMMARY.value, limit]
 
             result = conn.execute(query, params)
-            
+
             # Get nodes using arrow and convert
             nodes = self._rows_to_nodes(result)
-            
+
             # Reverse to get chronological order (oldest first)
             nodes.reverse()
             return nodes
@@ -299,7 +301,7 @@ class DuckDBStorage:
 
             nodes = self._rows_to_nodes(result)
             search_results = []
-            
+
             # Compile regex pattern if using regex mode
             compiled_pattern = None
             if regex:
@@ -314,11 +316,15 @@ class DuckDBStorage:
                 if regex and compiled_pattern:
                     # Use regex matching
                     content_matches = bool(compiled_pattern.search(node.content))
-                    summary_matches = node.summary and bool(compiled_pattern.search(node.summary))
+                    summary_matches = node.summary and bool(
+                        compiled_pattern.search(node.summary)
+                    )
                 else:
                     # Use exact substring matching
                     content_matches = query.lower() in node.content.lower()
-                    summary_matches = node.summary and query.lower() in node.summary.lower()
+                    summary_matches = (
+                        node.summary and query.lower() in node.summary.lower()
+                    )
 
                 # Skip nodes that don't match
                 if not content_matches and not summary_matches:
@@ -395,7 +401,9 @@ class DuckDBStorage:
     def _rows_to_nodes(self, result) -> List[ConversationNode]:
         """Convert DuckDB result to ConversationNode objects using PyArrow."""
         arrow_table = result.arrow()
-        nodes = [ConversationNode.model_validate(row) for row in arrow_table.to_pylist()]
+        nodes = [
+            ConversationNode.model_validate(row) for row in arrow_table.to_pylist()
+        ]
         return [self._enhance_node_summary(node) for node in nodes]
 
     def _row_to_single_node(self, result) -> Optional[ConversationNode]:
@@ -412,9 +420,11 @@ class DuckDBStorage:
         # Only enhance nodes that have been compressed (not FULL level) and have a summary
         if node.level != CompressionLevel.FULL and node.summary:
             # Create a copy of the node with enhanced summary
-            enhanced_summary = f"{node.summary} ({node.line_count} lines)"
+            enhanced_summary = (
+                f"ID {node.node_id}: {node.summary} ({node.line_count} lines)"
+            )
             # Create a new node with the enhanced summary
             node_dict = node.model_dump()
-            node_dict['summary'] = enhanced_summary
+            node_dict["summary"] = enhanced_summary
             return ConversationNode.model_validate(node_dict)
         return node
