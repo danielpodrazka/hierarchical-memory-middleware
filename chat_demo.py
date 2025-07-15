@@ -109,13 +109,16 @@ class ChatTester:
                     node_type = result["node_type"]
                     content = result["content"]
                     timestamp = result["timestamp"]
+                    node_id = result.get("node_id", "unknown")
 
                     # Truncate long content
                     if len(content) > 100:
                         content = content[:97] + "..."
 
                     icon = "👤" if node_type == "user" else "🤖"
-                    print(f"   {i}. {icon} [{timestamp[:16]}] {content}")
+                    print(
+                        f"   {i}. {icon} [Node {node_id}] [{timestamp[:16]}] {content}"
+                    )
         except Exception as e:
             print(f"❌ Error getting recent messages: {e}")
 
@@ -134,18 +137,62 @@ class ChatTester:
                 node_type = result["node_type"]
                 content = result["content"]
                 score = result["relevance_score"]
+                node_id = result.get("node_id", "unknown")
 
                 icon = "👤" if node_type == "user" else "🤖"
-                print(f"   {i}. {icon} (score: {score:.2f}) {content}")
+                print(f"   {i}. {icon} [Node {node_id}] (score: {score:.2f}) {content}")
 
         except Exception as e:
             print(f"❌ Error searching: {e}")
+
+    async def expand_node(self, node_id: int):
+        """Expand a node to show its full content."""
+        try:
+            print(f"🔍 Expanding node {node_id}...")
+            result = await self.conversation_manager.get_node_details(
+                node_id, self.conversation_id
+            )
+
+            if result is None:
+                print(
+                    f"   ❌ Node {node_id} not found in conversation {self.conversation_id}"
+                )
+                return
+
+            print(f"   ✅ Node {node_id} details:")
+            print(f"      Type: {result.get('node_type', 'unknown')}")
+            print(f"      Timestamp: {result.get('timestamp', 'unknown')}")
+            print(f"      Sequence: {result.get('sequence_number', 'unknown')}")
+            print(f"      Compression Level: {result.get('level', 'unknown')}")
+            print(f"      Line Count: {result.get('line_count', 'unknown')}")
+            print(f"      Tokens Used: {result.get('tokens_used', 'unknown')}")
+
+            # Show topics if available
+            topics = result.get("topics", [])
+            if topics:
+                print(f"      Topics: {', '.join(topics)}")
+
+            # Show summary if available
+            summary = result.get("summary", "")
+            if summary:
+                print(f"      Summary: {summary}")
+
+            # Show content
+            content = result.get("content", "")
+            print(f"      Content:")
+            # Split content into lines and indent
+            for line in content.split("\n"):
+                print(f"        {line}")
+
+        except Exception as e:
+            print(f"   ❌ Error expanding node {node_id}: {e}")
 
     async def chat_loop(self):
         """Main interactive chat loop."""
         print("💬 Chat started! Type your messages below.")
         print("   Special commands:")
         print("   - /search <query>  : Search conversation memory")
+        print("   - /expand <node_id>: Expand a node to see full content")
         print("   - /summary         : Show conversation summary")
         print("   - /recent          : Show recent messages")
         print("   - /quit or /exit   : Exit chat")
@@ -188,8 +235,9 @@ class ChatTester:
             print("👋 Goodbye!")
             sys.exit(0)
         elif cmd == "/help":
-            print("📖 Available commands:")
+            print("📚 Available commands:")
             print("   /search <query>  - Search conversation memory")
+            print("   /expand <node_id>- Expand a node to see full content")
             print("   /summary         - Show conversation summary")
             print("   /recent          - Show recent messages")
             print("   /quit, /exit     - Exit chat")
@@ -198,6 +246,15 @@ class ChatTester:
                 await self.search_memory(args)
             else:
                 print("❌ Usage: /search <query>")
+        elif cmd == "/expand":
+            if args:
+                try:
+                    node_id = int(args)
+                    await self.expand_node(node_id)
+                except ValueError:
+                    print("❌ Invalid node_id. Please provide a number.")
+            else:
+                print("❌ Usage: /expand <node_id>")
         elif cmd == "/summary":
             await self.show_conversation_summary()
         elif cmd == "/recent":
