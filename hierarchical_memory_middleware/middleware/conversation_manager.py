@@ -12,6 +12,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     UserPromptPart,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
@@ -107,6 +109,46 @@ class HierarchicalConversationManager:
             logger.error(f"❌ TOOL CALL FAILED: {tool_name} - {str(e)}")
             raise
 
+    def _reconstruct_ai_message_from_node(self, node, use_summary: bool = False) -> ModelResponse:
+        """Reconstruct a ModelResponse from a stored AI node, preserving tool call structure."""
+        try:
+            # Check if we have saved full message structure
+            if node.ai_components and 'full_messages' in node.ai_components:
+                full_messages = node.ai_components['full_messages']
+                if full_messages:
+                    # Reconstruct from the first complete message
+                    msg_data = full_messages[0]
+                    parts = []
+                    
+                    for part_data in msg_data.get('parts', []):
+                        if part_data['type'] == 'TextPart':
+                            parts.append(TextPart(content=part_data['content']))
+                        elif part_data['type'] == 'ToolCallPart':
+                            parts.append(ToolCallPart(
+                                tool_name=part_data['tool_name'],
+                                args=part_data['args'],
+                                tool_call_id=part_data['tool_call_id']
+                            ))
+                        elif part_data['type'] == 'ToolReturnPart':
+                            parts.append(ToolReturnPart(
+                                tool_name=part_data['tool_name'],
+                                content=part_data['content'],
+                                tool_call_id=part_data['tool_call_id']
+                            ))
+                    
+                    if parts:
+                        return ModelResponse(parts=parts)
+            
+            # Fallback to simple text response
+            content = node.summary if use_summary else node.content
+            return ModelResponse(parts=[TextPart(content=content)])
+            
+        except Exception as e:
+            logger.debug(f"Error reconstructing AI message from node {node.node_id}: {e}")
+            # Ultimate fallback
+            content = node.summary if use_summary else node.content
+            return ModelResponse(parts=[TextPart(content=content)])
+
     async def _hierarchical_memory_processor(
         self, messages: List[ModelMessage]
     ) -> List[ModelMessage]:
@@ -141,11 +183,9 @@ class HierarchicalConversationManager:
                         )
                     )
                 elif node.node_type == NodeType.AI:
-                    memory_messages.append(
-                        ModelResponse(
-                            parts=[TextPart(content=node.summary or node.content)]
-                        )
-                    )
+                    # Try to reconstruct full message structure for compressed nodes
+                    reconstructed_msg = self._reconstruct_ai_message_from_node(node, use_summary=True)
+                    memory_messages.append(reconstructed_msg)
 
             # Add recent full messages
             for node in recent_nodes[-8:]:  # Last 8 recent nodes
@@ -154,9 +194,9 @@ class HierarchicalConversationManager:
                         ModelRequest(parts=[UserPromptPart(content=node.content)])
                     )
                 elif node.node_type == NodeType.AI:
-                    memory_messages.append(
-                        ModelResponse(parts=[TextPart(content=node.content)])
-                    )
+                    # Try to reconstruct full message structure for recent nodes
+                    reconstructed_msg = self._reconstruct_ai_message_from_node(node, use_summary=False)
+                    memory_messages.append(reconstructed_msg)
 
             logger.debug(
                 f"Memory processor: found {len(memory_messages)} memory messages, {len(messages)} incoming messages"
@@ -257,6 +297,44 @@ class HierarchicalConversationManager:
                 logger.debug(f"Could not extract token usage: {e}")
                 tokens_used = None
 
+            # Extract full message structure from response
+            full_messages = []
+            try:
+                # The response should contain the full conversation turn
+                # including tool calls and results
+                if hasattr(response, 'all_messages') and response.all_messages:
+                    # Get the AI messages from this turn (excluding the user message)
+                    for msg in response.all_messages():
+                        if isinstance(msg, ModelResponse):
+                            # Serialize the full message structure
+                            msg_dict = {
+                                'type': 'ModelResponse',
+                                'parts': []
+                            }
+                            for part in msg.parts:
+                                if isinstance(part, TextPart):
+                                    msg_dict['parts'].append({
+                                        'type': 'TextPart',
+                                        'content': part.content
+                                    })
+                                elif isinstance(part, ToolCallPart):
+                                    msg_dict['parts'].append({
+                                        'type': 'ToolCallPart',
+                                        'tool_name': part.tool_name,
+                                        'args': part.args,
+                                        'tool_call_id': part.tool_call_id
+                                    })
+                                elif isinstance(part, ToolReturnPart):
+                                    msg_dict['parts'].append({
+                                        'type': 'ToolReturnPart',
+                                        'tool_name': part.tool_name,
+                                        'content': part.content,
+                                        'tool_call_id': part.tool_call_id
+                                    })
+                            full_messages.append(msg_dict)
+            except Exception as e:
+                logger.debug(f"Could not extract full message structure: {e}")
+
             ai_node = await self.storage.save_conversation_node(
                 conversation_id=self.conversation_id,
                 node_type=NodeType.AI,
@@ -265,6 +343,7 @@ class HierarchicalConversationManager:
                 ai_components={
                     "assistant_text": response.output,
                     "model_used": self.config.work_model,
+                    "full_messages": full_messages,  # Save complete message structure
                 },
             )
 
