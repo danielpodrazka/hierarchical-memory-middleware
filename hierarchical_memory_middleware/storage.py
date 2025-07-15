@@ -368,10 +368,26 @@ class DuckDBStorage:
     def _rows_to_nodes(self, result) -> List[ConversationNode]:
         """Convert DuckDB result to ConversationNode objects using PyArrow."""
         arrow_table = result.arrow()
-        return [ConversationNode.model_validate(row) for row in arrow_table.to_pylist()]
+        nodes = [ConversationNode.model_validate(row) for row in arrow_table.to_pylist()]
+        return [self._enhance_node_summary(node) for node in nodes]
 
     def _row_to_single_node(self, result) -> Optional[ConversationNode]:
         """Convert a single DuckDB result row to ConversationNode using PyArrow."""
         arrow_table = result.arrow()
         rows = arrow_table.to_pylist()
-        return ConversationNode.model_validate(rows[0]) if rows else None
+        if not rows:
+            return None
+        node = ConversationNode.model_validate(rows[0])
+        return self._enhance_node_summary(node)
+
+    def _enhance_node_summary(self, node: ConversationNode) -> ConversationNode:
+        """Enhance summary/archive nodes by appending line count information."""
+        # Only enhance nodes that have been compressed (not FULL level) and have a summary
+        if node.level != CompressionLevel.FULL and node.summary:
+            # Create a copy of the node with enhanced summary
+            enhanced_summary = f"{node.summary} ({node.line_count} lines)"
+            # Create a new node with the enhanced summary
+            node_dict = node.model_dump()
+            node_dict['summary'] = enhanced_summary
+            return ConversationNode.model_validate(node_dict)
+        return node

@@ -41,7 +41,7 @@ Response
     ↓
 [MCP Memory Tools] (Read-only, called by LLM during response)
     ├── expand_node(id)
-    ├── search_memory(query)
+    ├── find(query)
     └── browse_hierarchy(level)
 ```
 
@@ -285,7 +285,7 @@ class MemoryBrowsingServer(MCPServer):
         }
 
     @mcp_tool()
-    async def search_memory(self, query: str, limit: int = 10) -> List[Dict]:
+    async def find(self, query: str, limit: int = 10) -> List[Dict]:
         """Search across all conversation history"""
         results = await self.storage.semantic_search(query, limit)
 

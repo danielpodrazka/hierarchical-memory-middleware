@@ -119,7 +119,7 @@ async def test_compress_node(storage):
     # Verify compression
     node = await storage.get_node(ai_node.node_id, conversation_id)
     assert node.level == CompressionLevel.SUMMARY
-    assert node.summary == "Brief explanation of machine learning..."
+    assert node.summary == "Brief explanation of machine learning... (1 lines)"
     assert node.summary_metadata["compression_method"] == "test"
 
 
@@ -219,14 +219,20 @@ async def test_search_nodes_regex(storage):
     results = await storage.search_nodes(conversation_id, phone_pattern, regex=True)
 
     assert len(results) >= 1  # Should find the AI response with phone numbers
-    assert any("123-456-7890" in result.node.content or "555" in result.node.content for result in results)
+    assert any(
+        "123-456-7890" in result.node.content or "555" in result.node.content
+        for result in results
+    )
 
     # Test version number regex pattern
     version_pattern = r"v?\d+\.\d+\.\d+"
     results = await storage.search_nodes(conversation_id, version_pattern, regex=True)
 
     assert len(results) >= 1  # Should find the version message
-    assert any("1.2.3" in result.node.content or "2.0.1" in result.node.content for result in results)
+    assert any(
+        "1.2.3" in result.node.content or "2.0.1" in result.node.content
+        for result in results
+    )
 
     # Test case-insensitive regex
     case_pattern = r"(?i)EMAIL"  # Should match "email" regardless of case

@@ -102,7 +102,7 @@ class ChatTester:
     async def show_recent_messages(self, limit: int = 5):
         """Show recent conversation messages."""
         try:
-            results = await self.conversation_manager.search_memory("", limit=limit)
+            results = await self.conversation_manager.find("", limit=limit)
             if results:
                 print(f"\n📜 Recent messages:")
                 for i, result in enumerate(results[:limit], 1):
@@ -122,11 +122,11 @@ class ChatTester:
         except Exception as e:
             print(f"❌ Error getting recent messages: {e}")
 
-    async def search_memory(self, query: str):
+    async def find(self, query: str):
         """Search conversation memory."""
         try:
             print(f"🔍 Searching for: '{query}'")
-            results = await self.conversation_manager.search_memory(query, limit=5)
+            results = await self.conversation_manager.find(query, limit=5)
 
             if not results:
                 print("   No results found.")
@@ -243,7 +243,7 @@ class ChatTester:
             print("   /quit, /exit     - Exit chat")
         elif cmd == "/search":
             if args:
-                await self.search_memory(args)
+                await self.find(args)
             else:
                 print("❌ Usage: /search <query>")
         elif cmd == "/expand":

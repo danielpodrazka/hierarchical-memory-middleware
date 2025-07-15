@@ -99,7 +99,7 @@ graph TB
     end
     
     subgraph "MCP Memory Tools"
-        MCP["🔧 Memory Tools<br/>• expand_node(id)<br/>• search_memory(query)<br/>• browse_hierarchy(level)<br/>• get_stats()"]
+        MCP["🔧 Memory Tools<br/>• expand_node(id)<br/>• find(query)<br/>• browse_hierarchy(level)<br/>• get_stats()"]
     end
     
     User -.->|"Chat message"| CM
