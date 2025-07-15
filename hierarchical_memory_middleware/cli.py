@@ -109,7 +109,7 @@ async def _chat_session(
 
                 elif user_input.lower().startswith("search "):
                     query = user_input[7:]  # Remove 'search ' prefix
-                    results = await manager.search_memory(query)
+                    results = await manager.find(query)
 
                     if results:
                         table = Table(title=f"Search Results for '{query}'")

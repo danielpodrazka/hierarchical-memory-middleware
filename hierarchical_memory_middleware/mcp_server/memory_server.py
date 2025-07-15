@@ -142,7 +142,7 @@ class MemoryMCPServer:
                 }
 
         @self.mcp.tool()
-        async def search_memory(query: str, limit: int = 10) -> Dict[str, Any]:
+        async def find(query: str, limit: int = 10) -> Dict[str, Any]:
             """Search across conversation history for relevant nodes.
 
             This tool allows searching through all conversation nodes (both
@@ -166,7 +166,7 @@ class MemoryMCPServer:
                     }
 
                 logger.info(f"Searching memory for: {query[:50]}...")
-                results = await self.conversation_manager.search_memory(query, limit)
+                results = await self.conversation_manager.find(query, limit)
 
                 return {
                     "success": True,
@@ -211,19 +211,23 @@ class MemoryMCPServer:
 
     async def start_conversation(self, conversation_id: Optional[str] = None) -> str:
         """Start or resume a conversation for the MCP server.
-        
+
         This method automatically sets the conversation_id state, so tools
         can be used immediately after calling this method.
         """
         # Start/resume the conversation
-        result_conversation_id = await self.conversation_manager.start_conversation(conversation_id)
-        
+        result_conversation_id = await self.conversation_manager.start_conversation(
+            conversation_id
+        )
+
         # Automatically set the conversation_id state for tools
         self.current_conversation_id = result_conversation_id
         self.conversation_manager.conversation_id = result_conversation_id
-        
-        logger.info(f"Started conversation and set conversation_id to: {result_conversation_id}")
-        
+
+        logger.info(
+            f"Started conversation and set conversation_id to: {result_conversation_id}"
+        )
+
         return result_conversation_id
 
     def run(

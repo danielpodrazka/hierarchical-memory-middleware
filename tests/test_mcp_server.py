@@ -135,10 +135,10 @@ class TestMemoryMCPServer:
         
         assert result is None
 
-    async def test_search_memory(self, mcp_server, sample_nodes):
+    async def test_find(self, mcp_server, sample_nodes):
         """Test memory search functionality."""
         # Search for Python-related content
-        results = await mcp_server.conversation_manager.search_memory("Python")
+        results = await mcp_server.conversation_manager.find("Python")
         
         assert isinstance(results, list)
         # Should find at least one result containing "Python"
@@ -244,7 +244,7 @@ class TestMemoryMCPServer:
         assert "error" in stats
 
         # Test search with no conversation
-        results = await server.conversation_manager.search_memory("test")
+        results = await server.conversation_manager.find("test")
         assert isinstance(results, list)
         assert len(results) == 0
 
@@ -285,7 +285,7 @@ class TestMCPServerIntegration:
         assert "Test message" in node_details["content"]
         
         # Test search
-        search_results = await server.conversation_manager.search_memory("Test")
+        search_results = await server.conversation_manager.find("Test")
         assert len(search_results) >= 1
         
         # Test stats

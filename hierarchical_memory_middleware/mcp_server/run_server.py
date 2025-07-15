@@ -94,7 +94,7 @@ async def main() -> None:
             f"Starting MCP server on {args.transport}://{args.host}:{args.port}"
         )
         logger.info(
-            "Available tools: expand_node, search_memory, get_conversation_stats, get_recent_nodes"
+            "Available tools: expand_node, find, get_conversation_stats, get_recent_nodes"
         )
         logger.info("Press Ctrl+C to stop the server")
 

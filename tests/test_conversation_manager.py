@@ -562,17 +562,17 @@ async def test_hierarchical_memory_processor_message_format(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_search_memory_without_conversation(mock_config):
-    """Test search_memory when no conversation is active."""
+async def test_find_without_conversation(mock_config):
+    """Test find when no conversation is active."""
     manager = HierarchicalConversationManager(mock_config)
 
-    results = await manager.search_memory("test query")
+    results = await manager.find("test query")
 
     assert results == []
 
 
 @pytest.mark.asyncio
-async def test_search_memory_successful(mock_config, sample_search_result):
+async def test_find_successful(mock_config, sample_search_result):
     """Test successful memory search with results."""
     manager = HierarchicalConversationManager(mock_config)
     manager.conversation_id = "test-conv-1"
@@ -582,7 +582,7 @@ async def test_search_memory_successful(mock_config, sample_search_result):
     ) as mock_search:
         mock_search.return_value = [sample_search_result]
 
-        results = await manager.search_memory("test query", limit=5)
+        results = await manager.find("test query", limit=5)
 
         mock_search.assert_called_once_with(
             conversation_id="test-conv-1", query="test query", limit=5
@@ -597,7 +597,7 @@ async def test_search_memory_successful(mock_config, sample_search_result):
 
 
 @pytest.mark.asyncio
-async def test_search_memory_handles_storage_errors(mock_config):
+async def test_find_handles_storage_errors(mock_config):
     """Test error handling when storage search fails."""
     manager = HierarchicalConversationManager(mock_config)
     manager.conversation_id = "test-conv-1"
@@ -607,13 +607,13 @@ async def test_search_memory_handles_storage_errors(mock_config):
     ) as mock_search:
         mock_search.side_effect = Exception("Search error")
 
-        results = await manager.search_memory("test query")
+        results = await manager.find("test query")
 
         assert results == []
 
 
 @pytest.mark.asyncio
-async def test_search_memory_response_format(mock_config):
+async def test_find_response_format(mock_config):
     """Test that search results are properly formatted."""
     manager = HierarchicalConversationManager(mock_config)
     manager.conversation_id = "test-conv-1"
@@ -638,7 +638,7 @@ async def test_search_memory_response_format(mock_config):
     ) as mock_search:
         mock_search.return_value = [search_result]
 
-        results = await manager.search_memory("test")
+        results = await manager.find("test")
 
         result = results[0]
 
