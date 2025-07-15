@@ -46,7 +46,7 @@ async def test_save_conversation_node(storage):
     assert user_node.content == user_message
     assert user_node.node_type == NodeType.USER
     assert user_node.sequence_number == 0
-    assert user_node.id is not None
+    assert user_node.node_id is not None
 
     # Test AI node
     assert ai_node.conversation_id == conversation_id
@@ -56,7 +56,7 @@ async def test_save_conversation_node(storage):
     assert ai_node.tokens_used == 100
     assert ai_node.ai_components["assistant_text"] == ai_response
     assert ai_node.ai_components["model_used"] == "test-model"
-    assert ai_node.id is not None
+    assert ai_node.node_id is not None
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,8 @@ async def test_compress_node(storage):
 
     # Compress the AI node
     success = await storage.compress_node(
-        node_id=ai_node.id,
+        node_id=ai_node.node_id,
+        conversation_id=conversation_id,
         compression_level=CompressionLevel.SUMMARY,
         summary="Brief explanation of machine learning...",
         metadata={"compression_method": "test"},
@@ -116,7 +117,7 @@ async def test_compress_node(storage):
     assert success
 
     # Verify compression
-    node = await storage.get_node(ai_node.id)
+    node = await storage.get_node(ai_node.node_id, conversation_id)
     assert node.level == CompressionLevel.SUMMARY
     assert node.summary == "Brief explanation of machine learning..."
     assert node.summary_metadata["compression_method"] == "test"

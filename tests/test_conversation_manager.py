@@ -44,7 +44,7 @@ def mock_config():
 def sample_conversation_node():
     """Create a sample conversation node for testing."""
     return ConversationNode(
-        id=1,
+        node_id=1,
         conversation_id="test-conv-1",
         node_type=NodeType.USER,
         content="Hello, how are you?",
@@ -235,9 +235,9 @@ async def test_chat_successful_response(mock_config):
 
         # Create mock nodes to return
         mock_user_node = Mock()
-        mock_user_node.id = 1
+        mock_user_node.node_id = 1
         mock_ai_node = Mock()
-        mock_ai_node.id = 2
+        mock_ai_node.node_id = 2
 
         with (
             patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
@@ -322,9 +322,9 @@ async def test_chat_saves_conversation_nodes_correctly(mock_config):
 
         # Create mock nodes to return
         mock_user_node = Mock()
-        mock_user_node.id = 1
+        mock_user_node.node_id = 1
         mock_ai_node = Mock()
-        mock_ai_node.id = 2
+        mock_ai_node.node_id = 2
 
         with (
             patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
@@ -371,9 +371,9 @@ async def test_chat_triggers_compression_check(mock_config):
 
     # Create mock nodes to return
     mock_user_node = Mock()
-    mock_user_node.id = 1
+    mock_user_node.node_id = 1
     mock_ai_node = Mock()
-    mock_ai_node.id = 2
+    mock_ai_node.node_id = 2
 
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
@@ -416,7 +416,7 @@ async def test_hierarchical_memory_processor_with_memory(
     manager.conversation_id = "test-conv-1"
 
     recent_node = ConversationNode(
-        id=2,
+        node_id=2,
         conversation_id="test-conv-1",
         node_type=NodeType.USER,
         content="Recent message",
@@ -427,7 +427,7 @@ async def test_hierarchical_memory_processor_with_memory(
     )
 
     compressed_node = ConversationNode(
-        id=1,
+        node_id=1,
         conversation_id="test-conv-1",
         node_type=NodeType.AI,
         content="Original content",
@@ -512,7 +512,7 @@ async def test_hierarchical_memory_processor_message_format(mock_config):
     manager.conversation_id = "test-conv-1"
 
     user_node = ConversationNode(
-        id=1,
+        node_id=1,
         conversation_id="test-conv-1",
         node_type=NodeType.USER,
         content="User message",
@@ -523,7 +523,7 @@ async def test_hierarchical_memory_processor_message_format(mock_config):
     )
 
     ai_node = ConversationNode(
-        id=2,
+        node_id=2,
         conversation_id="test-conv-1",
         node_type=NodeType.AI,
         content="AI response",
@@ -620,7 +620,7 @@ async def test_search_memory_response_format(mock_config):
 
     long_content = "A" * 250
     search_node = ConversationNode(
-        id=1,
+        node_id=1,
         conversation_id="test-conv-1",
         node_type=NodeType.USER,
         content=long_content,
@@ -817,6 +817,7 @@ async def test_check_and_compress_successful_compression(
 
         mock_compress_node.assert_called_once_with(
             node_id=sample_compression_result.original_node_id,
+            conversation_id="test-conv-1",
             compression_level=CompressionLevel.SUMMARY,
             summary=sample_compression_result.compressed_content,
             metadata=sample_compression_result.metadata,
@@ -884,12 +885,12 @@ async def test_get_node_details_existing_node(mock_config, sample_conversation_n
     ) as mock_get_node:
         mock_get_node.return_value = sample_conversation_node
 
-        details = await manager.get_node_details(1)
+        details = await manager.get_node_details(1, "test-conv-1")
 
-        mock_get_node.assert_called_once_with(1)
+        mock_get_node.assert_called_once_with(1, "test-conv-1")
 
         assert details is not None
-        assert details["id"] == sample_conversation_node.id
+        assert details["node_id"] == sample_conversation_node.node_id
         assert details["conversation_id"] == sample_conversation_node.conversation_id
         assert details["content"] == sample_conversation_node.content
         assert details["level"] == sample_conversation_node.level.name
@@ -905,7 +906,7 @@ async def test_get_node_details_nonexistent_node(mock_config):
     ) as mock_get_node:
         mock_get_node.return_value = None
 
-        details = await manager.get_node_details(999)
+        details = await manager.get_node_details(999, "test-conv-1")
 
         assert details is None
 
@@ -920,7 +921,7 @@ async def test_get_node_details_handles_storage_errors(mock_config):
     ) as mock_get_node:
         mock_get_node.side_effect = Exception("Storage error")
 
-        details = await manager.get_node_details(1)
+        details = await manager.get_node_details(1, "test-conv-1")
 
         assert details is None
 
@@ -931,7 +932,7 @@ async def test_get_node_details_response_format(mock_config):
     manager = HierarchicalConversationManager(mock_config)
 
     complete_node = ConversationNode(
-        id=1,
+        node_id=1,
         conversation_id="test-conv-1",
         node_type=NodeType.AI,
         content="Complete node content",
@@ -950,10 +951,10 @@ async def test_get_node_details_response_format(mock_config):
     ) as mock_get_node:
         mock_get_node.return_value = complete_node
 
-        details = await manager.get_node_details(1)
+        details = await manager.get_node_details(1, "test-conv-1")
 
         expected_fields = [
-            "id",
+            "node_id",
             "conversation_id",
             "node_type",
             "content",
@@ -1014,9 +1015,9 @@ async def test_conversation_with_compression_cycle(mock_config):
 
     # Create mock nodes to return
     mock_user_node = Mock()
-    mock_user_node.id = 1
+    mock_user_node.node_id = 1
     mock_ai_node = Mock()
-    mock_ai_node.id = 2
+    mock_ai_node.node_id = 2
 
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
@@ -1044,7 +1045,7 @@ async def test_conversation_resume_after_compression(mock_config):
     manager = HierarchicalConversationManager(mock_config)
 
     compressed_node = ConversationNode(
-        id=1,
+        node_id=1,
         conversation_id="test-conv-1",
         node_type=NodeType.AI,
         content="Original long content",
@@ -1114,9 +1115,9 @@ async def test_chat_with_empty_message(mock_config):
 
         # Create mock nodes to return
         mock_user_node = Mock()
-        mock_user_node.id = 1
+        mock_user_node.node_id = 1
         mock_ai_node = Mock()
-        mock_ai_node.id = 2
+        mock_ai_node.node_id = 2
 
         with (
             patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
@@ -1143,7 +1144,7 @@ async def test_memory_processor_with_mixed_node_types(mock_config):
 
     mixed_nodes = [
         ConversationNode(
-            id=1,
+            node_id=1,
             conversation_id="test-conv-1",
             node_type=NodeType.USER,
             content="User message",
@@ -1153,7 +1154,7 @@ async def test_memory_processor_with_mixed_node_types(mock_config):
             level=CompressionLevel.FULL,
         ),
         ConversationNode(
-            id=2,
+            node_id=2,
             conversation_id="test-conv-1",
             node_type=NodeType.AI,
             content="Original AI response",
@@ -1200,9 +1201,9 @@ async def test_conversation_manager_logging(mock_config, caplog):
     mock_response.output = "Response"
     # Create mock nodes to return
     mock_user_node = Mock()
-    mock_user_node.id = 1
+    mock_user_node.node_id = 1
     mock_ai_node = Mock()
-    mock_ai_node.id = 2
+    mock_ai_node.node_id = 2
 
     with (
         patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,

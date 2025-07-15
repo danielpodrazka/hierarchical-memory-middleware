@@ -216,9 +216,14 @@ class HierarchicalConversationManager:
             # Extract token usage from response
             tokens_used = None
             try:
-                if hasattr(response, "usage") and callable(response.usage):
-                    usage_info = response.usage()
-                    tokens_used = getattr(usage_info, "total_tokens", None)
+                if hasattr(response, "usage"):
+                    if callable(response.usage):
+                        usage_info = response.usage()
+                        tokens_used = getattr(usage_info, "total_tokens", None)
+                    else:
+                        # usage is a dict
+                        usage_info = response.usage
+                        tokens_used = usage_info.get("total_tokens", None)
             except Exception as e:
                 logger.debug(f"Could not extract token usage: {e}")
                 tokens_used = None
@@ -286,7 +291,7 @@ class HierarchicalConversationManager:
 
             return [
                 {
-                    "node_id": result.node.id,
+                    "node_id": result.node.node_id,
                     "content": result.node.content[:200] + "..."
                     if len(result.node.content) > 200
                     else result.node.content,

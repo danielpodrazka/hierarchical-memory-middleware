@@ -103,9 +103,9 @@ class TestMemoryMCPServer:
         storage = mcp_server.storage
         
         for node in sample_nodes:
-            retrieved = await storage.get_node(node.id)
-            assert retrieved is not None, f"Failed to retrieve node {node.id}"
-            assert retrieved.id == node.id
+            retrieved = await storage.get_node(node.node_id, node.conversation_id)
+            assert retrieved is not None, f"Failed to retrieve node {node.node_id}"
+            assert retrieved.node_id == node.node_id
             assert retrieved.content == node.content
 
     async def test_expand_node_success(self, mcp_server, sample_nodes):
@@ -118,20 +118,20 @@ class TestMemoryMCPServer:
         assert len(ai_nodes) > 0, "No AI nodes found in sample_nodes"
         
         node = ai_nodes[0]  # First AI node
-        node_id = node.id
+        node_id = node.node_id
 
         # Test the expand_node tool indirectly through the conversation manager
-        result = await mcp_server.conversation_manager.get_node_details(node_id)
+        result = await mcp_server.conversation_manager.get_node_details(node_id, node.conversation_id)
 
         assert result is not None, f"get_node_details returned None for node_id {node_id}"
-        assert result["id"] == node_id
+        assert result["node_id"] == node_id
         assert result["content"] is not None
         assert result["node_type"] == "ai"
 
     async def test_expand_node_not_found(self, mcp_server):
         """Test node expansion with non-existent node ID."""
         # Test with a non-existent node ID
-        result = await mcp_server.conversation_manager.get_node_details(99999)
+        result = await mcp_server.conversation_manager.get_node_details(99999, "nonexistent-conversation")
         
         assert result is None
 
@@ -176,7 +176,7 @@ class TestMemoryMCPServer:
         # Check node structure
         if recent_nodes:
             node = recent_nodes[0]
-            assert hasattr(node, 'id')
+            assert hasattr(node, 'node_id')
             assert hasattr(node, 'content')
             assert hasattr(node, 'node_type')
 
@@ -280,7 +280,7 @@ class TestMCPServerIntegration:
         )
 
         # Test node expansion
-        node_details = await server.conversation_manager.get_node_details(user_node.id)
+        node_details = await server.conversation_manager.get_node_details(user_node.node_id, user_node.conversation_id)
         assert node_details is not None
         assert "Test message" in node_details["content"]
         
