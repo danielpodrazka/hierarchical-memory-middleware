@@ -205,13 +205,14 @@ class DuckDBStorage:
         compression_level: CompressionLevel,
         summary: str,
         metadata: Optional[Dict[str, Any]] = None,
+        topics: Optional[List[str]] = None,
     ) -> bool:
         """Compress a node to a summary."""
         with self._get_connection() as conn:
             result = conn.execute(
                 """
                 UPDATE nodes
-                SET level = ?, summary = ?, summary_metadata = ?
+                SET level = ?, summary = ?, summary_metadata = ?, topics = ?
                 WHERE node_id = ? AND conversation_id = ?
                 RETURNING node_id
             """,
@@ -219,12 +220,28 @@ class DuckDBStorage:
                     compression_level.value,
                     summary,
                     json.dumps(metadata) if metadata else None,
+                    json.dumps(topics) if topics else None,
                     node_id,
                     conversation_id,
                 ),
             ).fetchone()
 
             return result is not None
+
+    async def apply_compression_result(
+        self,
+        conversation_id: str,
+        compression_result,  # CompressionResult object
+    ) -> bool:
+        """Apply a compression result to update a node with TF-IDF topics."""
+        return await self.compress_node(
+            node_id=compression_result.original_node_id,
+            conversation_id=conversation_id,
+            compression_level=CompressionLevel.SUMMARY,
+            summary=compression_result.compressed_content,
+            metadata=compression_result.metadata,
+            topics=compression_result.topics_extracted,
+        )
 
     async def get_recent_nodes(
         self, conversation_id: str, limit: int = 10
@@ -449,12 +466,17 @@ class DuckDBStorage:
         return self._enhance_node_summary(node)
 
     def _enhance_node_summary(self, node: ConversationNode) -> ConversationNode:
-        """Enhance summary/archive nodes by appending line count information."""
+        """Enhance summary/archive nodes by appending line count and TF-IDF topics information."""
         # Only enhance nodes that have been compressed (not FULL level) and have a summary
         if node.level == CompressionLevel.SUMMARY and node.summary:
-            enhanced_summary = (
-                f"ID {node.node_id}: {node.summary} ({node.line_count} lines)"
-            )
+            # Build enhanced summary with line count
+            enhanced_summary = f"ID {node.node_id}: {node.summary} ({node.line_count} lines)"
+            
+            # Add TF-IDF topics if available
+            if node.topics:
+                topics_str = ", ".join(node.topics[:3])  # Show top 3 topics
+                enhanced_summary += f" [Topics: {topics_str}]"
+            
             # Create a new node with the enhanced summary
             node_dict = node.model_dump()
             node_dict["summary"] = enhanced_summary

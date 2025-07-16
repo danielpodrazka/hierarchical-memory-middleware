@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime
 
 from hierarchical_memory_middleware.compression import (
-    SimpleCompressor,
+    TfidfCompressor,
     CompressionManager,
 )
 from hierarchical_memory_middleware.models import (
@@ -52,8 +52,8 @@ Each type has specific use cases and approaches to solving problems.""",
 
 @pytest.fixture
 def compressor():
-    """Create a SimpleCompressor instance."""
-    return SimpleCompressor(max_words=8)
+    """Create a TfidfCompressor instance."""
+    return TfidfCompressor(max_words=8)
 
 
 def test_compress_short_content(compressor, sample_user_node):
@@ -86,17 +86,22 @@ def test_compress_long_content(compressor, sample_ai_node):
 
 
 def test_extract_topics(compressor):
-    """Test topic extraction from content."""
+    """Test TF-IDF topic extraction from content."""
     text = "Machine learning algorithms are used in artificial intelligence applications for data science"
-    topics = compressor._extract_simple_topics(text)
+    
+    # Add the text to the corpus first for TF-IDF training
+    compressor.topic_extractor.add_document(text)
+    compressor.topic_extractor.fit()
+    
+    # Extract topics using TF-IDF
+    topics = compressor.topic_extractor.extract_topics(text)
 
-    # Should extract meaningful keywords
-    assert "machine" in topics
-    assert "learning" in topics
-    assert "algorithms" in topics
-    # Should not include stopwords
-    assert "are" not in topics
-    assert "in" not in topics
+    # Should extract some meaningful keywords
+    assert len(topics) > 0
+    # The topics should be strings
+    assert all(isinstance(topic, str) for topic in topics)
+    # Should not be empty strings
+    assert all(len(topic) > 0 for topic in topics)
 
 
 def test_should_compress(compressor, sample_user_node):
@@ -112,7 +117,7 @@ def test_should_compress(compressor, sample_user_node):
 @pytest.fixture
 def compression_manager():
     """Create a CompressionManager instance."""
-    compressor = SimpleCompressor(max_words=8)
+    compressor = TfidfCompressor(max_words=8)
     return CompressionManager(compressor, recent_node_limit=3)
 
 

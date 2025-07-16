@@ -17,7 +17,7 @@ from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 from ..config import Config
 from ..storage import DuckDBStorage
-from ..compression import SimpleCompressor, CompressionManager
+from ..compression import TfidfCompressor, CompressionManager
 from ..advanced_hierarchy import AdvancedCompressionManager
 from ..models import CompressionLevel, NodeType, HierarchyThresholds
 from ..model_manager import ModelManager
@@ -43,7 +43,7 @@ class HierarchicalConversationManager:
         self.storage = storage or DuckDBStorage(config.db_path)
 
         # Initialize advanced hierarchical compression system
-        self.compressor = SimpleCompressor(max_words=8)
+        self.compressor = TfidfCompressor(max_words=8)
 
         # Create hierarchy thresholds (configurable)
         self.hierarchy_thresholds = HierarchyThresholds(

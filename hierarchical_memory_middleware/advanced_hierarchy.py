@@ -10,7 +10,7 @@ from .models import (
     HierarchyThresholds,
     MetaGroup,
 )
-from .compression import SimpleCompressor
+from .compression import TfidfCompressor
 
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ class AdvancedHierarchyManager:
 
     def __init__(
         self,
-        base_compressor: SimpleCompressor,
+        base_compressor: TfidfCompressor,
         thresholds: Optional[HierarchyThresholds] = None,
     ):
         """Initialize the advanced hierarchy manager."""
@@ -317,7 +317,7 @@ class AdvancedCompressionManager:
 
     def __init__(
         self,
-        base_compressor: SimpleCompressor,
+        base_compressor: TfidfCompressor,
         thresholds: Optional[HierarchyThresholds] = None,
     ):
         """Initialize the advanced compression manager."""
