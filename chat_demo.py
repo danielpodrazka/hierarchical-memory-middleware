@@ -28,6 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Fixed conversation ID for testing (so you can restart and resume)
+TEST_CONVERSATION_ID = "3d1fe944-ea9d-4b48-a311-0852171f953c"
 TEST_CONVERSATION_ID = "582019a5-3fb5-4fe1-aefb-0ca09c33a726"
 
 
@@ -366,7 +367,9 @@ class ChatTester:
                         "line_count": node.line_count,
                         "compression_level": node.level.value,
                         "tokens_used": node.tokens_used,
-                        "topics": node.topics,
+                        "topics": node.topics
+                        if node.topics and isinstance(node.topics, list)
+                        else [],
                         "ai_components": node.ai_components,
                         "relates_to_node_id": node.relates_to_node_id,
                     }

@@ -471,12 +471,22 @@ class DuckDBStorage:
         if node.level == CompressionLevel.SUMMARY and node.summary:
             # Build enhanced summary with line count
             enhanced_summary = f"ID {node.node_id}: {node.summary} ({node.line_count} lines)"
-            
+
             # Add TF-IDF topics if available
-            if node.topics:
-                topics_str = ", ".join(node.topics[:3])  # Show top 3 topics
-                enhanced_summary += f" [Topics: {topics_str}]"
-            
+            # Ensure topics is a list and not None
+            if node.topics and isinstance(node.topics, list) and len(node.topics) > 0:
+                try:
+                    # Filter out empty strings and None values
+                    valid_topics = [topic for topic in node.topics if topic and isinstance(topic, str)]
+                    if valid_topics:
+                        topics_str = ", ".join(valid_topics[:3])  # Show top 3 topics
+                        enhanced_summary += f" [Topics: {topics_str}]"
+                except Exception as e:
+                    # Log the error but don't break the summary enhancement
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Error processing topics for node {node.node_id}: {e}")
+
             # Create a new node with the enhanced summary
             node_dict = node.model_dump()
             node_dict["summary"] = enhanced_summary
