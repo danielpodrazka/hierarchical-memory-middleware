@@ -63,6 +63,31 @@ def check_mcp_server_running(mcp_url: str) -> bool:
         return False
 
 
+async def resolve_conversation_id(partial_id: str, db_path: str) -> str:
+    """Resolve a partial conversation ID to a full ID, Docker-style."""
+    try:
+        from .storage import DuckDBStorage
+        
+        storage = DuckDBStorage(db_path)
+        conversations = await storage.get_conversation_list()
+        
+        # Find conversations that start with the partial ID
+        matches = [conv for conv in conversations if conv['id'].startswith(partial_id)]
+        
+        if len(matches) == 0:
+            raise ValueError(f"No conversation found with ID starting with '{partial_id}'")
+        elif len(matches) == 1:
+            return matches[0]['id']
+        else:
+            # Multiple matches - show ambiguous error
+            match_ids = [conv['id'][:12] + '...' for conv in matches]
+            raise ValueError(
+                f"Ambiguous conversation ID '{partial_id}'. Matches: {', '.join(match_ids)}"
+            )
+    except Exception as e:
+        raise ValueError(f"Error resolving conversation ID: {e}")
+
+
 async def save_conversation_to_json(manager, conversation_id: str, export_dir: str):
     """Save conversation to JSON files for real-time viewing."""
     try:
@@ -785,6 +810,14 @@ async def _show_summaries(
     if mcp_port:
         config.mcp_port = mcp_port
 
+    # Resolve partial conversation ID
+    try:
+        conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
+        console.print(f"[dim]Resolved conversation ID: {conversation_id}[/dim]")
+    except ValueError as e:
+        console.print(f"[red]❌ {e}[/red]")
+        sys.exit(1)
+
     # Setup MCP
     mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
     if not check_mcp_server_running(mcp_server_url):
@@ -827,6 +860,14 @@ async def _expand_node(
         config.db_path = db_path
     if mcp_port:
         config.mcp_port = mcp_port
+
+    # Resolve partial conversation ID
+    try:
+        conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
+        console.print(f"[dim]Resolved conversation ID: {conversation_id}[/dim]")
+    except ValueError as e:
+        console.print(f"[red]❌ {e}[/red]")
+        sys.exit(1)
 
     # Setup MCP
     mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
@@ -871,6 +912,15 @@ async def _search_memory(
         config.db_path = db_path
     if mcp_port:
         config.mcp_port = mcp_port
+
+    # Resolve partial conversation ID if provided
+    if conversation_id:
+        try:
+            conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
+            console.print(f"[dim]Resolved conversation ID: {conversation_id}[/dim]")
+        except ValueError as e:
+            console.print(f"[red]❌ {e}[/red]")
+            sys.exit(1)
 
     # Setup MCP
     mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
@@ -964,6 +1014,14 @@ async def _export_conversation(
         config.db_path = db_path
     if mcp_port:
         config.mcp_port = mcp_port
+
+    # Resolve partial conversation ID
+    try:
+        conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
+        console.print(f"[dim]Resolved conversation ID: {conversation_id}[/dim]")
+    except ValueError as e:
+        console.print(f"[red]❌ {e}[/red]")
+        sys.exit(1)
 
     # Setup MCP
     mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
