@@ -237,6 +237,12 @@ class HierarchicalConversationManager:
             # Build message history from hierarchical memory
             memory_messages = []
 
+            # Add conversation context as the first message
+            context_message = f"[Context: Conversation ID {self.conversation_id}]"
+            memory_messages.append(
+                ModelRequest(parts=[UserPromptPart(content=context_message)])
+            )
+
             # Add compressed context (already the most recent from get_recent_compressed_nodes)
             for node in compressed_nodes:
                 if node.node_type == NodeType.USER:
