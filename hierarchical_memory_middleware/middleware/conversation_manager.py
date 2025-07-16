@@ -39,6 +39,8 @@ class HierarchicalConversationManager:
         self.config = config
         self.conversation_id: Optional[str] = None
 
+        config.setup_logging()
+
         # Initialize storage
         self.storage = storage or DuckDBStorage(config.db_path)
 
@@ -86,8 +88,10 @@ class HierarchicalConversationManager:
             logger.info(f"Successfully created model instance for: {config.work_model}")
         except Exception as e:
             logger.error(f"Failed to create model {config.work_model}: {str(e)}")
-            raise ValueError(f"Unable to initialize model '{config.work_model}': {str(e)}")
-        
+            raise ValueError(
+                f"Unable to initialize model '{config.work_model}': {str(e)}"
+            )
+
         agent_kwargs = {
             "model": model_instance,
             "system_prompt": system_prompt,
@@ -267,7 +271,8 @@ class HierarchicalConversationManager:
                             "node_id": node.node_id,
                             "node_type": "ai",
                             "content": (
-                                node.content if node.level == CompressionLevel.META
+                                node.content
+                                if node.level == CompressionLevel.META
                                 else (node.summary or node.content)
                             ),
                             "is_summary": True,

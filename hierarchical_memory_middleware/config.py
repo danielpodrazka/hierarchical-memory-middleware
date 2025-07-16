@@ -31,6 +31,11 @@ class Config:
     enable_mcp_tools: bool = True
     log_tool_calls: bool = True
 
+    log_level: str = "INFO"
+    log_file: Optional[str] = "hierarchical_memory.log"
+    enable_file_logging: bool = True
+    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
     @classmethod
     def from_env(cls, env_file: Optional[str] = ".env") -> "Config":
         """Load configuration from environment variables and .env file.
@@ -79,6 +84,12 @@ class Config:
             # MCP server
             mcp_port=get_env_int("MCP_PORT", 8000),
             enable_mcp_tools=get_env_bool("ENABLE_MCP_TOOLS", True),
+            log_tool_calls=get_env_bool("LOG_TOOL_CALLS", True),
+            # Logging
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            log_file=os.getenv("LOG_FILE", "hierarchical_memory.log"),
+            enable_file_logging=get_env_bool("ENABLE_FILE_LOGGING", True),
+            log_format=os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"),
         )
 
     @classmethod
@@ -90,3 +101,35 @@ class Config:
         if env_file and os.path.exists(env_file):
             return cls.from_env(env_file)
         return cls()
+
+    def setup_logging(self) -> None:
+        """Set up logging configuration based on config settings."""
+        import logging
+        from logging.handlers import RotatingFileHandler
+
+        # Set root logger level
+        logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
+
+        # Create formatter
+        formatter = logging.Formatter(self.log_format)
+
+        # Clear existing handlers to avoid duplicates
+        root_logger = logging.getLogger()
+        root_logger.handlers.clear()
+
+        # Always add console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+
+        # Add file handler if enabled
+        if self.enable_file_logging and self.log_file:
+            file_handler = RotatingFileHandler(
+                self.log_file,
+                maxBytes=10*1024*1024,  # 10MB
+                backupCount=5
+            )
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+
+        logging.info(f"Logging configured - Level: {self.log_level}, File: {self.log_file if self.enable_file_logging else 'None'}")
