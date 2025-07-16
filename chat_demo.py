@@ -28,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Fixed conversation ID for testing (so you can restart and resume)
-TEST_CONVERSATION_ID = "3d1fe944-ea9d-4b48-a311-0852171f953c"
+TEST_CONVERSATION_ID = "582019a5-3fb5-4fe1-aefb-0ca09c33a726"
 
 
 class ChatTester:
@@ -173,7 +173,9 @@ class ChatTester:
     async def show_hierarchical_summaries(self, start_node: int, end_node: int):
         """Show hierarchical summaries for a range of nodes using the new Phase 4 functionality."""
         try:
-            print(f"📊 Phase 4: Hierarchical Summaries for nodes {start_node}-{end_node}")
+            print(
+                f"📊 Phase 4: Hierarchical Summaries for nodes {start_node}-{end_node}"
+            )
             print("    (This demonstrates the new advanced hierarchy system)")
             print()
 
@@ -182,7 +184,7 @@ class ChatTester:
             nodes = await self.conversation_manager.storage.get_nodes_in_range(
                 conversation_id=self.conversation_id,
                 start_node_id=start_node,
-                end_node_id=end_node
+                end_node_id=end_node,
             )
 
             if not nodes:
@@ -190,12 +192,7 @@ class ChatTester:
                 return
 
             # Group nodes by compression level
-            nodes_by_level = {
-                "FULL": [],
-                "SUMMARY": [],
-                "META": [],
-                "ARCHIVE": []
-            }
+            nodes_by_level = {"FULL": [], "SUMMARY": [], "META": [], "ARCHIVE": []}
 
             for node in nodes:
                 level_name = node.level.name
@@ -205,14 +202,16 @@ class ChatTester:
             total_nodes = len(nodes)
             total_lines = sum(node.line_count or 0 for node in nodes)
 
-            print(f"   📈 Found {total_nodes} nodes ({total_lines} total lines) in range {start_node}-{end_node}")
+            print(
+                f"   📈 Found {total_nodes} nodes ({total_lines} total lines) in range {start_node}-{end_node}"
+            )
             print()
 
             # Show compression distribution
             compression_stats = {
                 level: len(nodes) for level, nodes in nodes_by_level.items() if nodes
             }
-            
+
             if compression_stats:
                 print("   🗜️  Compression Distribution:")
                 for level, count in compression_stats.items():
@@ -223,19 +222,21 @@ class ChatTester:
             level_order = ["FULL", "SUMMARY", "META", "ARCHIVE"]
             level_descriptions = {
                 "FULL": "🟢 Recent nodes with complete content",
-                "SUMMARY": "🟡 Older nodes with 1-2 sentence summaries", 
+                "SUMMARY": "🟡 Older nodes with 1-2 sentence summaries",
                 "META": "🟠 Groups of summary nodes (20-40 nodes each)",
-                "ARCHIVE": "🔴 Very compressed high-level context"
+                "ARCHIVE": "🔴 Very compressed high-level context",
             }
 
             for level in level_order:
                 if level in nodes_by_level and nodes_by_level[level]:
                     level_nodes = nodes_by_level[level]
                     print(f"   {level_descriptions[level]} ({len(level_nodes)} nodes):")
-                    
+
                     for i, node in enumerate(level_nodes[:5], 1):  # Show first 5 nodes
-                        node_type_icon = "👤" if node.node_type.value == "user" else "🤖"
-                        
+                        node_type_icon = (
+                            "👤" if node.node_type.value == "user" else "🤖"
+                        )
+
                         # Determine what content to show
                         if node.summary:
                             display_content = node.summary
@@ -243,13 +244,15 @@ class ChatTester:
                         else:
                             display_content = node.content
                             content_type = "[Full]"
-                            
+
                         # Truncate long content
                         if len(display_content) > 150:
                             display_content = display_content[:150] + "..."
-                            
-                        print(f"      {i}. {node_type_icon} Node {node.node_id} {content_type}: {display_content}")
-                        
+
+                        print(
+                            f"      {i}. {node_type_icon} Node {node.node_id} {content_type}: {display_content}"
+                        )
+
                     if len(level_nodes) > 5:
                         print(f"      ... and {len(level_nodes) - 5} more nodes")
                     print()
@@ -264,20 +267,32 @@ class ChatTester:
                             metadata = json.loads(node.summary_metadata)
                             meta_info = metadata.get("meta_group_info", {})
                             if meta_info:
-                                print(f"      📦 Node {node.node_id}: Groups nodes {meta_info.get('start_node_id')}-{meta_info.get('end_node_id')}")
-                                print(f"         Topics: {', '.join(meta_info.get('main_topics', [])[:3])}")
-                                print(f"         Contains: {meta_info.get('node_count')} nodes, {meta_info.get('total_lines')} lines")
+                                print(
+                                    f"      📦 Node {node.node_id}: Groups nodes {meta_info.get('start_node_id')}-{meta_info.get('end_node_id')}"
+                                )
+                                print(
+                                    f"         Topics: {', '.join(meta_info.get('main_topics', [])[:3])}"
+                                )
+                                print(
+                                    f"         Contains: {meta_info.get('node_count')} nodes, {meta_info.get('total_lines')} lines"
+                                )
                         except (json.JSONDecodeError, KeyError):
-                            print(f"      📦 Node {node.node_id}: META group (details unavailable)")
+                            print(
+                                f"      📦 Node {node.node_id}: META group (details unavailable)"
+                            )
                 print()
 
-            print("   ✨ This demonstrates Phase 4: Advanced Hierarchy with 4-level compression!")
+            print(
+                "   ✨ This demonstrates Phase 4: Advanced Hierarchy with 4-level compression!"
+            )
             print("      FULL → SUMMARY → META → ARCHIVE")
 
         except Exception as e:
             print(f"   ❌ Error showing hierarchical summaries: {e}")
             import traceback
+
             traceback.print_exc()
+
     async def expand_node(self, node_id: int):
         """Expand a node to show its full content."""
         try:
@@ -337,7 +352,9 @@ class ChatTester:
             full_conversation_data = {
                 "conversation_id": self.conversation_id,
                 "total_nodes": len(all_nodes),
-                "last_updated": all_nodes[-1].timestamp.isoformat() if all_nodes else None,
+                "last_updated": all_nodes[-1].timestamp.isoformat()
+                if all_nodes
+                else None,
                 "nodes": [
                     {
                         "node_id": node.node_id,
@@ -363,27 +380,39 @@ class ChatTester:
 
             # 2. Get the actual AI view data from the conversation manager
             ai_view_raw = self.conversation_manager.get_last_ai_view_data()
-            
+
             if ai_view_raw:
                 # We have AI view data from the last message processing
                 ai_view_data = {
                     "conversation_id": self.conversation_id,
                     "description": "This shows exactly what the AI agent saw in the last message processing",
-                    "last_updated": all_nodes[-1].timestamp.isoformat() if all_nodes else None,
-                    "compressed_nodes_count": len(ai_view_raw.get("compressed_nodes", [])),
+                    "last_updated": all_nodes[-1].timestamp.isoformat()
+                    if all_nodes
+                    else None,
+                    "compressed_nodes_count": len(
+                        ai_view_raw.get("compressed_nodes", [])
+                    ),
                     "recent_nodes_count": len(ai_view_raw.get("recent_nodes", [])),
-                    "recent_messages_from_input_count": len(ai_view_raw.get("recent_messages_from_input", [])),
-                    "total_messages_sent_to_ai": ai_view_raw.get("total_messages_sent_to_ai", 0),
+                    "recent_messages_from_input_count": len(
+                        ai_view_raw.get("recent_messages_from_input", [])
+                    ),
+                    "total_messages_sent_to_ai": ai_view_raw.get(
+                        "total_messages_sent_to_ai", 0
+                    ),
                     "compressed_nodes": ai_view_raw.get("compressed_nodes", []),
                     "recent_nodes": ai_view_raw.get("recent_nodes", []),
-                    "recent_messages_from_input": ai_view_raw.get("recent_messages_from_input", []),
+                    "recent_messages_from_input": ai_view_raw.get(
+                        "recent_messages_from_input", []
+                    ),
                 }
             else:
                 # No AI view data available yet (e.g., no messages processed)
                 ai_view_data = {
                     "conversation_id": self.conversation_id,
                     "description": "No AI view data available yet - send a message to see what the AI sees",
-                    "last_updated": all_nodes[-1].timestamp.isoformat() if all_nodes else None,
+                    "last_updated": all_nodes[-1].timestamp.isoformat()
+                    if all_nodes
+                    else None,
                     "note": "The AI view is captured during message processing. It will be populated after you send a message.",
                 }
 
@@ -403,7 +432,9 @@ class ChatTester:
         print("   - /expand <node_id>: Expand a node to see full content")
         print("   - /summary         : Show conversation summary")
         print("   - /recent          : Show recent messages")
-        print("   - /summaries <start> <end> : Show hierarchical summaries for node range (Phase 4)")
+        print(
+            "   - /summaries <start> <end> : Show hierarchical summaries for node range (Phase 4)"
+        )
         print("   - /quit or /exit   : Exit chat")
         print("   - /help            : Show this help")
         print()
@@ -452,7 +483,9 @@ class ChatTester:
             print("   /expand <node_id>- Expand a node to see full content")
             print("   /summary         - Show conversation summary")
             print("   /recent          - Show recent messages")
-            print("   /summaries <start> <end> - Show hierarchical summaries for node range (Phase 4)")
+            print(
+                "   /summaries <start> <end> - Show hierarchical summaries for node range (Phase 4)"
+            )
             print("   /quit, /exit     - Exit chat")
         elif cmd == "/search":
             if args:
