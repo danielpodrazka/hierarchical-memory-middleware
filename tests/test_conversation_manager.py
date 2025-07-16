@@ -1329,20 +1329,44 @@ async def test_streaming_text_after_tool_calls_bug(mock_config):
             ]
             self.chunk_index = 0
             
+            # Create mock stream response that simulates complete text including post-tool-call text
+            class MockPart:
+                def __init__(self, content):
+                    self.content = content
+            
+            class MockMessage:
+                def __init__(self, complete_text):
+                    self.parts = [MockPart(complete_text)]
+            
+            class MockStreamResponse:
+                def __init__(self, complete_text):
+                    self.complete_text = complete_text
+                
+                def get(self):
+                    return MockMessage(self.complete_text)
+            
+            # Simulate the bug: text after tool calls (only first 2 chunks are "streamed")
+            # but the complete text includes ALL chunks
+            complete_text = "".join(self.text_chunks)
+            self._stream_response = MockStreamResponse(complete_text)
+
         async def stream_text(self, delta=True):
             """Mock streaming text that simulates tool calls interrupting text flow"""
-            for chunk in self.text_chunks:
-                yield chunk
-                self.chunk_index += 1
+            # BUG SIMULATION: Only yield first 2 chunks, simulating that tool calls
+            # interrupt the stream and prevent the remaining text from being streamed
+            for i, chunk in enumerate(self.text_chunks):
+                if i < 2:  # Only stream first 2 chunks
+                    yield chunk
+                    self.chunk_index += 1
                 # Simulate tool call happening after 2nd chunk
-                if self.chunk_index == 2:
+                if i == 1:
                     # This is where the tool call would happen
-                    # The bug is that streaming might not capture subsequent text properly
-                    pass
+                    # The bug is that subsequent text doesn't get streamed
+                    break  # Stop streaming here to simulate the bug
 
         async def __aenter__(self):
             return self
-            
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
@@ -1365,8 +1389,10 @@ async def test_streaming_text_after_tool_calls_bug(mock_config):
         patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
     ):
         # Set up MCP context manager
-        mock_mcp_context.return_value.__aenter__ = AsyncMock()
-        mock_mcp_context.return_value.__aexit__ = AsyncMock()
+        async_context_manager = AsyncMock()
+        async_context_manager.__aenter__ = AsyncMock()
+        async_context_manager.__aexit__ = AsyncMock()
+        mock_mcp_context.return_value = async_context_manager
         
         # Set up streaming result with proper context manager
         mock_stream_result = MockStreamResult()

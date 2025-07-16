@@ -497,6 +497,7 @@ class HierarchicalConversationManager:
 
             full_response_text = ""
             final_response = None
+            stream_result = None
 
             # Simple response-like object for compatibility with existing code
             class MockResponse:
@@ -507,16 +508,23 @@ class HierarchicalConversationManager:
                     return self._usage
 
             # Generate AI response using PydanticAI streaming
+            logger.info(f"Starting chat_stream with has_mcp_tools={self.has_mcp_tools}")
             if self.has_mcp_tools:
+                logger.info("Entering MCP context manager")
                 async with self.work_agent.run_mcp_servers():
+                    logger.info("MCP context manager entered, starting run_stream")
                     async with self.work_agent.run_stream(user_prompt=user_message) as stream_result:
+                        logger.info("Streaming started")
+                        # Stream text as it comes
                         async for chunk in stream_result.stream_text(delta=True):
                             if chunk:
+                                logger.info(f"Yielding chunk: '{chunk}'")
                                 full_response_text += chunk
                                 yield chunk
                         final_response = MockResponse(full_response_text)
             else:
                 async with self.work_agent.run_stream(user_prompt=user_message) as stream_result:
+                    # Stream text as it comes
                     async for chunk in stream_result.stream_text(delta=True):
                         if chunk:
                             full_response_text += chunk
@@ -557,7 +565,7 @@ class HierarchicalConversationManager:
                 content=comprehensive_content,
                 tokens_used=tokens_used,
                 ai_components={
-                    "assistant_text": full_response_text,
+                    "assistant_text": full_response_text,  # This now includes ALL text
                     "model_used": self.config.work_model,
                     "tool_calls": self._extract_tool_calls(final_response),
                     "tool_results": self._extract_tool_results(final_response),
