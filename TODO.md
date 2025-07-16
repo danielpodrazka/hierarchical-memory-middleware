@@ -197,8 +197,8 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 - [x] New tool `find(text:str)` (regex search across all nodes or from A node to B node)
 
 ### Phase 4: Advanced Hierarchy
-- [ ] Multi-level hierarchy system (see diagrams.md for more details)
-- [ ] New tool `show_summaries(start_node:int,end_node:int)`
+- [x] Multi-level hierarchy system (see diagrams.md for more details)
+- [x] New tool `show_summaries(start_node:int,end_node:int)`
 
 ### Phase 5: User Interface
 - [ ] Web UI: basic chat interface with a panel of the left that allows for starting new conversations
