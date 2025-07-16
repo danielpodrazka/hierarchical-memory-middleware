@@ -35,11 +35,29 @@ console = Console()
 
 
 def check_mcp_server_running(mcp_url: str) -> bool:
-    """Check if MCP server is running."""
+    """Check if MCP server is running by sending an initialization request."""
     try:
         import requests
+        import json
 
-        response = requests.get(f"{mcp_url}/health", timeout=2)
+        # Add proper Accept header for MCP Streamable HTTP transport
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json"
+        }
+        
+        # Send MCP initialization request
+        init_request = {
+            "jsonrpc": "2.0",
+            "id": "test-init",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {}
+            }
+        }
+        
+        response = requests.post(mcp_url, headers=headers, json=init_request, timeout=2)
         return response.status_code == 200
     except Exception:
         return False
