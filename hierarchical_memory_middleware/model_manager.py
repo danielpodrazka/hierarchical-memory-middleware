@@ -7,6 +7,8 @@ from openai import AsyncOpenAI
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
 # Import Pydantic models from models.py
 from .models import (
@@ -131,6 +133,32 @@ class ModelManager:
 
             # Create PydanticAI OpenAI model with provider
             return OpenAIModel(
+                model_name=config.model_name,
+                provider=provider,
+                settings=model_settings
+            )
+
+        # Handle Gemini models
+        elif config.provider == ModelProvider.GEMINI:
+            # Create GoogleGLA provider with API key
+            provider = GoogleGLAProvider(api_key=api_key)
+
+            # Create model settings for temperature and max_tokens
+            from pydantic_ai.settings import ModelSettings
+            settings = {}
+
+            temperature = kwargs.get("temperature", config.default_temperature)
+            if temperature is not None:
+                settings["temperature"] = temperature
+
+            max_tokens = kwargs.get("max_tokens", config.max_tokens)
+            if max_tokens is not None:
+                settings["max_tokens"] = max_tokens
+
+            model_settings = ModelSettings(**settings) if settings else None
+
+            # Create PydanticAI Gemini model with provider
+            return GeminiModel(
                 model_name=config.model_name,
                 provider=provider,
                 settings=model_settings

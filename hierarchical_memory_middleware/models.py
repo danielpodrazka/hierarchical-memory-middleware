@@ -159,6 +159,7 @@ class ModelProvider(Enum):
     DEEPSEEK = "deepseek"
     COHERE = "cohere"
     MISTRAL = "mistral"
+    GEMINI = "gemini"
 
 
 class ModelConfig(BaseModel):
@@ -427,6 +428,57 @@ DEFAULT_MODEL_REGISTRY = ModelRegistry(
             context_window=32000,
             supports_functions=True,
             metadata={"family": "deepseek", "specialty": "coding"},
+        ),
+        # Google Gemini models
+        "gemini-2-5-pro": ModelConfig(
+            provider=ModelProvider.GEMINI,
+            model_name="gemini-2.5-pro",
+            api_key_env="GEMINI_API_KEY",
+            context_window=2000000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={"family": "gemini-2.5", "tier": "premium", "thinking": True},
+        ),
+        "gemini-2-5-flash": ModelConfig(
+            provider=ModelProvider.GEMINI,
+            model_name="gemini-2.5-flash",
+            api_key_env="GEMINI_API_KEY",
+            context_window=1000000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={"family": "gemini-2.5", "tier": "efficient", "thinking": True},
+        ),
+        "gemini-2-0-flash": ModelConfig(
+            provider=ModelProvider.GEMINI,
+            model_name="gemini-2.0-flash",
+            api_key_env="GEMINI_API_KEY",
+            context_window=1000000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={"family": "gemini-2.0", "tier": "fast"},
+        ),
+        "gemini-1-5-pro": ModelConfig(
+            provider=ModelProvider.GEMINI,
+            model_name="gemini-1.5-pro",
+            api_key_env="GEMINI_API_KEY",
+            context_window=2000000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={"family": "gemini-1.5", "tier": "multimodal"},
+        ),
+        "gemini-1-5-flash": ModelConfig(
+            provider=ModelProvider.GEMINI,
+            model_name="gemini-1.5-flash",
+            api_key_env="GEMINI_API_KEY",
+            context_window=1000000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={"family": "gemini-1.5", "tier": "efficient"},
         ),
     }
 )

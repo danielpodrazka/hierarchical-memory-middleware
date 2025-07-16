@@ -74,13 +74,65 @@ async def demo_conversation_with_moonshot():
         print(f"❌ Error: {e}")
 
 
+async def demo_conversation_with_gemini():
+    """Demonstrate conversation with Gemini model."""
+    print("\n=== Gemini Conversation Demo ===")
+
+    # Check if Gemini API key is available
+    if not ModelManager.validate_model_access("gemini-2-5-flash"):
+        print("❌ GEMINI_API_KEY not found in environment")
+        print("   Please set GEMINI_API_KEY in your .env file to run this demo")
+        print("   Get your API key from: https://ai.google.dev/")
+        return
+
+    try:
+        # Create config with Gemini model
+        config = Config(
+            work_model="gemini-2-5-flash",
+            summary_model="gemini-2-5-flash",
+            db_path="./demo_conversations_gemini.db"
+        )
+
+        # Initialize conversation manager
+        storage = DuckDBStorage(config.db_path)
+        manager = HierarchicalConversationManager(config, storage)
+
+        # Start a conversation
+        conversation_id = await manager.start_conversation()
+        print(f"Started conversation: {conversation_id}")
+
+        # Have a short conversation about AI
+        messages = [
+            "Hello! Can you explain what you are and your capabilities?",
+            "What makes Gemini different from other AI models?",
+            "Can you help me understand multimodal AI?",
+        ]
+
+        for message in messages:
+            print(f"\nUser: {message}")
+            response = await manager.chat(message)
+            print(f"Gemini: {response[:200]}{'...' if len(response) > 200 else ''}")
+
+        # Get conversation summary
+        summary = await manager.get_conversation_summary()
+        print(f"\nConversation summary: {summary}")
+
+        # Show some model info
+        model_info = ModelManager.get_model_info("gemini-2-5-flash")
+        if model_info:
+            print(f"\nModel info: {model_info['context_window']} tokens context, supports functions: {model_info['supports_functions']}")
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+
+
 async def demo_multiple_models():
     """Demonstrate using different models."""
     print("\n=== Multiple Models Demo ===")
     
     # Test models that have API keys
     test_models = []
-    for model_name in ["claude-4-sonnet", "gpt-4o", "moonshot-v1-128k", "deepseek-chat"]:
+    for model_name in ["claude-4-sonnet", "gpt-4o", "moonshot-v1-128k", "deepseek-chat", "gemini-2-5-flash", "gemini-1-5-pro"]:
         if ModelManager.validate_model_access(model_name):
             test_models.append(model_name)
     
@@ -116,6 +168,7 @@ async def main():
     
     await demo_model_manager()
     await demo_conversation_with_moonshot()
+    await demo_conversation_with_gemini()
     await demo_multiple_models()
     
     print("\n✅ Demo completed!")
