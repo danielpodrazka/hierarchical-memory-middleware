@@ -541,7 +541,7 @@ class HierarchicalConversationManager:
             # Check if compression is needed
             await self._check_and_compress()
 
-            logger.info(
+            logger.debug(
                 f"Processed conversation turn (user: {user_node.node_id}, ai: {ai_node.node_id}) in conversation {self.conversation_id}"
             )
             return response.output
@@ -623,7 +623,7 @@ class HierarchicalConversationManager:
             if not all_nodes:
                 return
 
-            logger.info(f"Checking hierarchy compression for {len(all_nodes)} nodes")
+            logger.debug(f"Checking hierarchy compression for {len(all_nodes)} nodes")
 
             # Use advanced hierarchy compression system
             compression_results = (

@@ -35,6 +35,7 @@ class Config:
     log_file: Optional[str] = "hierarchical_memory.log"
     enable_file_logging: bool = True
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    debug_mode: bool = False
 
     @classmethod
     def from_env(cls, env_file: Optional[str] = ".env") -> "Config":
@@ -89,7 +90,10 @@ class Config:
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("LOG_FILE", "hierarchical_memory.log"),
             enable_file_logging=get_env_bool("ENABLE_FILE_LOGGING", True),
-            log_format=os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"),
+            log_format=os.getenv(
+                "LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            ),
+            debug_mode=get_env_bool("DEBUG_MODE", False),
         )
 
     @classmethod
@@ -108,7 +112,9 @@ class Config:
         from logging.handlers import RotatingFileHandler
 
         # Set root logger level
-        logging.getLogger().setLevel(getattr(logging, self.log_level.upper(), logging.INFO))
+        logging.getLogger().setLevel(
+            getattr(logging, self.log_level.upper(), logging.INFO)
+        )
 
         # Create formatter
         formatter = logging.Formatter(self.log_format)
@@ -126,10 +132,28 @@ class Config:
         if self.enable_file_logging and self.log_file:
             file_handler = RotatingFileHandler(
                 self.log_file,
-                maxBytes=10*1024*1024,  # 10MB
-                backupCount=5
+                maxBytes=10 * 1024 * 1024,  # 10MB
+                backupCount=5,
             )
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
 
-        logging.info(f"Logging configured - Level: {self.log_level}, File: {self.log_file if self.enable_file_logging else 'None'}")
+        # Configure third-party library logging levels based on debug mode
+        if not self.debug_mode:
+            # In non-debug mode, suppress verbose logging from third-party libraries
+            logging.getLogger("httpx").setLevel(logging.WARNING)
+            logging.getLogger("mcp").setLevel(logging.WARNING)
+            logging.getLogger("mcp.client").setLevel(logging.WARNING)
+            logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
+            logging.getLogger("requests").setLevel(logging.WARNING)
+            logging.getLogger("urllib3").setLevel(logging.WARNING)
+        else:
+            # In debug mode, allow all logging
+            logging.getLogger("httpx").setLevel(logging.DEBUG)
+            logging.getLogger("mcp").setLevel(logging.DEBUG)
+            logging.getLogger("mcp.client").setLevel(logging.DEBUG)
+            logging.getLogger("mcp.client.streamable_http").setLevel(logging.DEBUG)
+
+        logging.info(
+            f"Logging configured - Level: {self.log_level}, Debug mode: {self.debug_mode}, File: {self.log_file if self.enable_file_logging else 'None'}"
+        )

@@ -21,10 +21,7 @@ from .config import Config
 from .middleware.conversation_manager import HierarchicalConversationManager
 from .models import CompressionLevel, NodeType
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Logging will be configured by Config.setup_logging()
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(
@@ -227,6 +224,11 @@ def chat(
         "--export-dir",
         help="Directory for real-time conversation exports",
     ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable debug mode (show verbose logs)",
+    ),
 ):
     """Start an interactive chat session with MCP memory tools."""
     asyncio.run(
@@ -262,6 +264,9 @@ async def _chat_session(
     # Configure test-specific settings
     config.recent_node_limit = config.recent_node_limit or 5
     config.summary_threshold = config.summary_threshold or 20
+
+    # Setup logging configuration
+    config.setup_logging()
 
     console.print("[bold green]🚀 Hierarchical Memory Middleware[/bold green]")
     console.print(f"📄 Database: {config.db_path}")
@@ -916,6 +921,9 @@ async def _show_summaries(
     if mcp_port:
         config.mcp_port = mcp_port
 
+    # Setup logging configuration
+    config.setup_logging()
+
     # Resolve partial conversation ID
     try:
         conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
@@ -966,6 +974,9 @@ async def _expand_node(
         config.db_path = db_path
     if mcp_port:
         config.mcp_port = mcp_port
+
+    # Setup logging configuration
+    config.setup_logging()
 
     # Resolve partial conversation ID
     try:
@@ -1019,6 +1030,9 @@ async def _search_memory(
     if mcp_port:
         config.mcp_port = mcp_port
 
+    # Setup logging configuration
+    config.setup_logging()
+
     # Resolve partial conversation ID if provided
     if conversation_id:
         try:
@@ -1060,6 +1074,9 @@ async def _list_conversations(db_path: Optional[str]):
     config = Config.from_env()
     if db_path:
         config.db_path = db_path
+
+    # Setup logging configuration
+    config.setup_logging()
 
     try:
         from .storage import DuckDBStorage
@@ -1121,6 +1138,9 @@ async def _switch_conversation(
     if mcp_port:
         config.mcp_port = mcp_port
 
+    # Setup logging configuration
+    config.setup_logging()
+
     # Resolve conversation identifier
     try:
         conversation_id = await resolve_conversation_identifier(
@@ -1173,6 +1193,9 @@ async def _export_conversation(
         config.db_path = db_path
     if mcp_port:
         config.mcp_port = mcp_port
+
+    # Setup logging configuration
+    config.setup_logging()
 
     # Resolve partial conversation ID
     try:

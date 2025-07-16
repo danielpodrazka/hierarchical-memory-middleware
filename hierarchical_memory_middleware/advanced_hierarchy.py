@@ -76,7 +76,7 @@ class AdvancedHierarchyManager:
             if nodes_to_archive:
                 compression_needs[CompressionLevel.ARCHIVE] = nodes_to_archive
 
-        logger.info(
+        logger.debug(
             f"Compression analysis: {total_nodes} total nodes, "
             f"needs compression: {sum(len(nodes) for nodes in compression_needs.values())} nodes"
         )
@@ -337,9 +337,7 @@ class AdvancedCompressionManager:
         # Return nodes that need compression to SUMMARY level
         return compression_needs.get(CompressionLevel.SUMMARY, [])
 
-    def compress_nodes(
-        self, nodes: List[ConversationNode]
-    ) -> List[CompressionResult]:
+    def compress_nodes(self, nodes: List[ConversationNode]) -> List[CompressionResult]:
         """Compress nodes using SUMMARY level compression (backward compatibility)."""
         return self.hierarchy_manager.compress_to_summary(nodes)
 
