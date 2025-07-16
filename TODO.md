@@ -220,7 +220,6 @@ Now I can give you a complete answer about the refresh flow based on node 6...
   - [x] `expand <node_id>` - Expand a compressed node to show full content
   - [x] `find <query>` - Search across all conversation nodes with regex support
   - [x] `show_summaries <start_node> <end_node>` - Display summary hierarchy for node range
-  - [ ] `browse_hierarchy <level>` - Navigate through compression levels
 - [x] **Interactive Commands**: Add special CLI commands beyond basic chat:
   - [x] `/help` - Show available commands and usage
   - [x] `/history` - Display conversation overview with node counts
@@ -236,7 +235,6 @@ Now I can give you a complete answer about the refresh flow based on node 6...
   - [x] Colored output (user/assistant/system messages)
   - [x] Progress bars for long operations
   - [x] Formatted tables for summaries and stats
-  - [ ] Syntax highlighting for code blocks
 - [x] **Session Management**:
   - [x] Auto-save conversation state
   - [x] Resume previous conversations
@@ -245,7 +243,6 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 - [x] **Smart Input Handling**:
   - [x] Multi-line input support (end with Ctrl+D or empty line)
   - [x] Input history with arrow keys
-  - [ ] Tab completion for commands
   - [x] Interrupt handling (Ctrl+C gracefully)
 
 #### Configuration & Setup
