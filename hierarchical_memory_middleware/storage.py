@@ -414,6 +414,34 @@ class DuckDBStorage:
             ).fetchone()
             return result is not None
 
+    async def get_conversation_list(self) -> List[Dict[str, Any]]:
+        """Get a list of all conversations with basic information."""
+        with self._get_connection() as conn:
+            result = conn.execute(
+                """
+                SELECT 
+                    id, 
+                    total_nodes, 
+                    created_at, 
+                    last_updated,
+                    CASE WHEN total_nodes > 0 THEN 1 ELSE 0 END as is_active
+                FROM conversations
+                ORDER BY last_updated DESC
+                """
+            ).fetchall()
+            
+            conversations = []
+            for row in result:
+                conversations.append({
+                    "id": row[0],
+                    "node_count": row[1],
+                    "created": row[2].isoformat() if row[2] else None,
+                    "last_updated": row[3].isoformat() if row[3] else None,
+                    "is_active": bool(row[4])
+                })
+            
+            return conversations
+
     async def get_conversation_stats(
         self, conversation_id: str
     ) -> Optional[ConversationState]:
