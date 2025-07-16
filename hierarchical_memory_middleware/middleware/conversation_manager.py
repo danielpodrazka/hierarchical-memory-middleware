@@ -20,6 +20,7 @@ from ..storage import DuckDBStorage
 from ..compression import SimpleCompressor, CompressionManager
 from ..advanced_hierarchy import AdvancedCompressionManager
 from ..models import CompressionLevel, NodeType, HierarchyThresholds
+from ..model_manager import ModelManager
 
 
 logger = logging.getLogger(__name__)
@@ -78,9 +79,17 @@ class HierarchicalConversationManager:
             )
             mcp_servers.append(mcp_server)
 
-        # Create agent
+        # Create agent with model manager
+        try:
+            # Use model manager to create the appropriate model instance
+            model_instance = ModelManager.create_model(config.work_model)
+            logger.info(f"Successfully created model instance for: {config.work_model}")
+        except Exception as e:
+            logger.error(f"Failed to create model {config.work_model}: {str(e)}")
+            raise ValueError(f"Unable to initialize model '{config.work_model}': {str(e)}")
+        
         agent_kwargs = {
-            "model": config.work_model,
+            "model": model_instance,
             "system_prompt": system_prompt,
             "history_processors": [self._hierarchical_memory_processor],
         }

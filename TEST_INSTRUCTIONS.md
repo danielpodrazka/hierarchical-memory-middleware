@@ -96,7 +96,7 @@ This test script validates:
 ```
 🚀 Starting chat tester...
 📄 Database: ./chat_demo.db
-🤖 Model: claude-3-5-sonnet-20241022
+🤖 Model: claude-sonnet-4-20250514
 🔗 Conversation ID: test-chat-session-001
 
 🆕 Started new conversation
@@ -111,7 +111,7 @@ This test script validates:
 ```
 🚀 Starting chat tester...
 📄 Database: ./chat_demo.db
-🤖 Model: claude-3-5-sonnet-20241022
+🤖 Model: claude-sonnet-4-20250514
 🔗 Conversation ID: test-chat-session-001
 
 ✅ Resumed existing conversation
@@ -137,7 +137,7 @@ python chat_demo.py
 ```
 
 ### Model Configuration
-The script uses `claude-3-5-sonnet-20241022` by default. If you need to change it:
+The script uses `claude-sonnet-4-20250514` by default. If you need to change it:
 1. Edit line 40 in `chat_demo.py`
 2. Change `work_model` to your preferred model
 

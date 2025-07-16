@@ -200,17 +200,13 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 - [x] Multi-level hierarchy system (see diagrams.md for more details)
 - [x] New tool `show_summaries(start_node:int,end_node:int)`
 
-### Phase 5: User Interface
-- [ ] Web UI: basic chat interface with a panel of the left that allows for starting new conversations
-- [ ] Current token use in the conversation (similar to Letta)
-- [ ] Interactive converstion nodes that can be expanded
+### Phase 5: tf-idf topics
+- [ ] tf-idf topics included in the compressed nodes in the topics attribute. they should also appear in the display next to each enhanced summary display.
 
-### Phase 5: Semantic search
-- [ ] New tool+storage to support semantic search with embeddings
-- [ ] tf-idf keywords included in the compressed nodes overview
+### Phase 6: User Command Line Interface
+- [ ] Improve on the current chat_demo.py. It should at least support every MCP server function.
 
-
-### Phase 6: Production Ready
+### Phase 7: Production Ready
 - [ ] Documentation
 - [ ] Deployment packages
 - [ ] Example applications
