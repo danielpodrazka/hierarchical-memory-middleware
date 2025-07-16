@@ -32,11 +32,12 @@ from hierarchical_memory_middleware.advanced_hierarchy import (
 
 
 @pytest.fixture
-def mock_config():
+def mock_config(monkeypatch):
     """Create a mock config for testing."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-123")
     return Config(
-        work_model="test",
-        summary_model="test",
+        work_model="claude-4-sonnet",
+        summary_model="claude-4-sonnet",
         db_path=":memory:",
         recent_node_limit=10,
         summary_threshold=20,
@@ -101,11 +102,12 @@ async def test_conversation_manager_initialization(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_conversation_manager_with_custom_config():
+async def test_conversation_manager_with_custom_config(monkeypatch):
     """Test initialization with different config values."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-123")
     custom_config = Config(
-        work_model="test",
-        summary_model="test",
+        work_model="claude-4-haiku",
+        summary_model="claude-4-haiku",
         db_path="/tmp/custom.db",
         recent_node_limit=15,
         summary_threshold=30,
@@ -116,13 +118,13 @@ async def test_conversation_manager_with_custom_config():
     assert manager.config.recent_node_limit == 15
     assert manager.config.summary_threshold == 30
     assert manager.config.db_path == "/tmp/custom.db"
-    assert manager.config.work_model == "test"
+    assert manager.config.work_model == "claude-4-haiku"
 
     assert manager.compression_manager.recent_node_limit == 15
 
     assert isinstance(manager.storage, DuckDBStorage)
 
-    assert manager.work_agent.model._model_name == "test"
+    assert manager.work_agent.model._model_name == "claude-3-5-haiku-20241022"
 
 
 @pytest.mark.asyncio
@@ -359,7 +361,7 @@ async def test_chat_saves_conversation_nodes_correctly(mock_config):
                 second_call[1]["ai_components"]["assistant_text"]
                 == "This is my response"
             )
-            assert second_call[1]["ai_components"]["model_used"] == "test"
+            assert second_call[1]["ai_components"]["model_used"] == "claude-4-sonnet"
 
 
 @pytest.mark.asyncio
@@ -1033,7 +1035,9 @@ async def test_get_node_details_response_format(mock_config):
 async def test_full_conversation_workflow(mock_config):
     """Integration test of complete conversation workflow."""
 
-    config = Config(work_model="test", db_path=":memory:", recent_node_limit=5)
+    config = Config(
+        work_model="claude-4-sonnet", db_path=":memory:", recent_node_limit=5
+    )
 
     manager = HierarchicalConversationManager(config)
 

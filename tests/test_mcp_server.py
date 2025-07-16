@@ -5,30 +5,35 @@ from unittest.mock import AsyncMock, patch, Mock
 
 from hierarchical_memory_middleware.config import Config
 from hierarchical_memory_middleware.mcp_server.memory_server import MemoryMCPServer
-from hierarchical_memory_middleware.models import ConversationNode, NodeType, CompressionLevel
+from hierarchical_memory_middleware.models import (
+    ConversationNode,
+    NodeType,
+    CompressionLevel,
+)
 from hierarchical_memory_middleware.storage import DuckDBStorage
 
 
 @pytest.fixture
-def temp_config():
+def temp_config(monkeypatch):
     """Create a temporary configuration for testing."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-123")
     config = Config(
         db_path=":memory:",
-        work_model="claude-sonnet-4-20250514",
-        summary_model="claude-sonnet-4-20250514",
-        recent_node_limit=5
+        work_model="claude-4-sonnet",
+        summary_model="claude-4-sonnet",
+        recent_node_limit=5,
     )
-    
+
     return config
 
 
 @pytest.fixture
-@patch('hierarchical_memory_middleware.middleware.conversation_manager.Agent')
+@patch("hierarchical_memory_middleware.middleware.conversation_manager.Agent")
 async def mcp_server(mock_agent, temp_config):
     """Create an MCP server instance for testing."""
     # Mock the Agent to avoid network calls during initialization
     mock_agent.return_value = Mock()
-    
+
     server = MemoryMCPServer(temp_config)
     await server.start_conversation()
     return server
@@ -84,12 +89,12 @@ async def sample_nodes(mcp_server):
 class TestMemoryMCPServer:
     """Test cases for the Memory MCP Server."""
 
-    @patch('hierarchical_memory_middleware.middleware.conversation_manager.Agent')
+    @patch("hierarchical_memory_middleware.middleware.conversation_manager.Agent")
     async def test_server_initialization(self, mock_agent, temp_config):
         """Test that the server initializes correctly."""
         # Mock the Agent to avoid network calls during initialization
         mock_agent.return_value = Mock()
-        
+
         server = MemoryMCPServer(temp_config)
 
         assert server.config == temp_config
@@ -101,7 +106,7 @@ class TestMemoryMCPServer:
         """Debug test to check storage layer."""
         # Test that we can retrieve nodes directly from storage
         storage = mcp_server.storage
-        
+
         for node in sample_nodes:
             retrieved = await storage.get_node(node.node_id, node.conversation_id)
             assert retrieved is not None, f"Failed to retrieve node {node.node_id}"
@@ -111,19 +116,25 @@ class TestMemoryMCPServer:
     async def test_expand_node_success(self, mcp_server, sample_nodes):
         """Test successful node expansion."""
         # Debug: check what nodes we have
-        assert len(sample_nodes) >= 2, f"Expected at least 2 nodes, got {len(sample_nodes)}"
-        
+        assert (
+            len(sample_nodes) >= 2
+        ), f"Expected at least 2 nodes, got {len(sample_nodes)}"
+
         # Get a node ID - use the first AI node (should be index 1)
         ai_nodes = [n for n in sample_nodes if n.node_type.value == "ai"]
         assert len(ai_nodes) > 0, "No AI nodes found in sample_nodes"
-        
+
         node = ai_nodes[0]  # First AI node
         node_id = node.node_id
 
         # Test the expand_node tool indirectly through the conversation manager
-        result = await mcp_server.conversation_manager.get_node_details(node_id, node.conversation_id)
+        result = await mcp_server.conversation_manager.get_node_details(
+            node_id, node.conversation_id
+        )
 
-        assert result is not None, f"get_node_details returned None for node_id {node_id}"
+        assert (
+            result is not None
+        ), f"get_node_details returned None for node_id {node_id}"
         assert result["node_id"] == node_id
         assert result["content"] is not None
         assert result["node_type"] == "ai"
@@ -131,19 +142,21 @@ class TestMemoryMCPServer:
     async def test_expand_node_not_found(self, mcp_server):
         """Test node expansion with non-existent node ID."""
         # Test with a non-existent node ID
-        result = await mcp_server.conversation_manager.get_node_details(99999, "nonexistent-conversation")
-        
+        result = await mcp_server.conversation_manager.get_node_details(
+            99999, "nonexistent-conversation"
+        )
+
         assert result is None
 
     async def test_find(self, mcp_server, sample_nodes):
         """Test memory search functionality."""
         # Search for Python-related content
         results = await mcp_server.conversation_manager.find("Python")
-        
+
         assert isinstance(results, list)
         # Should find at least one result containing "Python"
         assert len(results) >= 1
-        
+
         # Check that results have the expected structure
         if results:
             result = results[0]
@@ -154,7 +167,7 @@ class TestMemoryMCPServer:
     async def test_conversation_stats(self, mcp_server, sample_nodes):
         """Test getting conversation statistics."""
         stats = await mcp_server.conversation_manager.get_conversation_summary()
-        
+
         assert isinstance(stats, dict)
         assert "conversation_id" in stats
         assert "total_nodes" in stats
@@ -163,29 +176,28 @@ class TestMemoryMCPServer:
     async def test_get_recent_nodes(self, mcp_server, sample_nodes):
         """Test getting recent nodes."""
         conversation_id = mcp_server.conversation_manager.conversation_id
-        
+
         # Get recent nodes directly from storage
         recent_nodes = await mcp_server.storage.get_recent_nodes(
-            conversation_id=conversation_id,
-            limit=10
+            conversation_id=conversation_id, limit=10
         )
-        
+
         assert isinstance(recent_nodes, list)
         assert len(recent_nodes) >= 4  # Our sample nodes
-        
+
         # Check node structure
         if recent_nodes:
             node = recent_nodes[0]
-            assert hasattr(node, 'node_id')
-            assert hasattr(node, 'content')
-            assert hasattr(node, 'node_type')
+            assert hasattr(node, "node_id")
+            assert hasattr(node, "content")
+            assert hasattr(node, "node_type")
 
-    @patch('hierarchical_memory_middleware.middleware.conversation_manager.Agent')
+    @patch("hierarchical_memory_middleware.middleware.conversation_manager.Agent")
     async def test_start_conversation_new(self, mock_agent, temp_config):
         """Test starting a new conversation."""
         # Mock the Agent to avoid network calls during initialization
         mock_agent.return_value = Mock()
-        
+
         server = MemoryMCPServer(temp_config)
 
         conversation_id = await server.start_conversation()
@@ -194,8 +206,10 @@ class TestMemoryMCPServer:
         assert len(conversation_id) > 0
         assert server.conversation_manager.conversation_id == conversation_id
 
-    @patch('hierarchical_memory_middleware.middleware.conversation_manager.Agent')
-    async def test_start_conversation_resume(self, mock_agent, mcp_server, sample_nodes):
+    @patch("hierarchical_memory_middleware.middleware.conversation_manager.Agent")
+    async def test_start_conversation_resume(
+        self, mock_agent, mcp_server, sample_nodes
+    ):
         """Test conversation resumption behavior with in-memory database."""
         # Mock the Agent to avoid network calls when creating new server
         mock_agent.return_value = Mock()
@@ -204,7 +218,7 @@ class TestMemoryMCPServer:
 
         # Create a new server instance (with separate in-memory database)
         new_server = MemoryMCPServer(mcp_server.config)
-        
+
         # When trying to resume a conversation from a different server instance
         # with in-memory database, it creates a new conversation
         resumed_id = await new_server.start_conversation(original_id)
@@ -223,20 +237,20 @@ class TestMemoryMCPServer:
         """Test that all expected tools are registered."""
         # Verify the MCP server was created successfully
         assert mcp_server.mcp is not None
-        
+
         # Verify that the server has the expected methods that indicate tools are registered
         # We can't easily inspect FastMCP internals, but if initialization succeeded,
         # the tools were registered
-        assert hasattr(mcp_server, '_register_tools')
+        assert hasattr(mcp_server, "_register_tools")
         assert callable(mcp_server._register_tools)
 
     @pytest.mark.slow
-    @patch('hierarchical_memory_middleware.middleware.conversation_manager.Agent')
+    @patch("hierarchical_memory_middleware.middleware.conversation_manager.Agent")
     async def test_error_handling(self, mock_agent, temp_config):
         """Test error handling in MCP tools."""
         # Mock the Agent to avoid network calls during initialization
         mock_agent.return_value = Mock()
-        
+
         server = MemoryMCPServer(temp_config)
 
         # Test with no active conversation
@@ -253,12 +267,12 @@ class TestMCPServerIntegration:
     """Integration tests for the MCP server."""
 
     @pytest.mark.integration
-    @patch('hierarchical_memory_middleware.middleware.conversation_manager.Agent')
+    @patch("hierarchical_memory_middleware.middleware.conversation_manager.Agent")
     async def test_full_workflow(self, mock_agent, temp_config):
         """Test a complete workflow with the MCP server."""
         # Mock the Agent to avoid network calls during initialization
         mock_agent.return_value = Mock()
-        
+
         server = MemoryMCPServer(temp_config)
 
         # Start conversation
@@ -280,31 +294,33 @@ class TestMCPServerIntegration:
         )
 
         # Test node expansion
-        node_details = await server.conversation_manager.get_node_details(user_node.node_id, user_node.conversation_id)
+        node_details = await server.conversation_manager.get_node_details(
+            user_node.node_id, user_node.conversation_id
+        )
         assert node_details is not None
         assert "Test message" in node_details["content"]
-        
+
         # Test search
         search_results = await server.conversation_manager.find("Test")
         assert len(search_results) >= 1
-        
+
         # Test stats
         stats = await server.conversation_manager.get_conversation_summary()
         assert stats["total_nodes"] >= 2
 
     @pytest.mark.integration
-    @patch('hierarchical_memory_middleware.middleware.conversation_manager.Agent')
+    @patch("hierarchical_memory_middleware.middleware.conversation_manager.Agent")
     async def test_server_configuration(self, mock_agent, temp_config):
         """Test server configuration and setup."""
         # Mock the Agent to avoid network calls during initialization
         mock_agent.return_value = Mock()
-        
+
         server = MemoryMCPServer(temp_config)
 
         # Test that server can be configured for different transports
         # Note: We're not actually starting the server here, just testing setup
-        assert hasattr(server, 'run')
-        assert hasattr(server, 'run_async')
-        
+        assert hasattr(server, "run")
+        assert hasattr(server, "run_async")
+
         # Test that tools are properly configured
         assert server.mcp is not None
