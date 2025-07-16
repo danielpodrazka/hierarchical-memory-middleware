@@ -409,8 +409,8 @@ async def _chat_session(
                     continue
 
                 # Generate AI response
-                with console.status("[bold green]🤖 Thinking..."):
-                    response = await manager.chat(user_input)
+                console.print("[bold green]🤖 Thinking...[/bold green]")
+                response = await manager.chat(user_input)
 
                 # Display response
                 console.print(
