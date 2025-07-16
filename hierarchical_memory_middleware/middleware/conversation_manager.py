@@ -253,6 +253,7 @@ class HierarchicalConversationManager:
                             "content": content,
                             "is_summary": bool(node.summary),
                             "sequence_number": node.sequence_number,
+                            "topics": node.topics or [],
                         }
                     )
                 elif node.node_type == NodeType.AI:
@@ -271,6 +272,7 @@ class HierarchicalConversationManager:
                             ),
                             "is_summary": True,
                             "sequence_number": node.sequence_number,
+                            "topics": node.topics or [],
                         }
                     )
 
@@ -286,6 +288,7 @@ class HierarchicalConversationManager:
                             "node_type": "user",
                             "content": node.content,
                             "sequence_number": node.sequence_number,
+                            "topics": node.topics or [],
                         }
                     )
                 elif node.node_type == NodeType.AI:
@@ -300,6 +303,7 @@ class HierarchicalConversationManager:
                             "node_type": "ai",
                             "content": node.content,
                             "sequence_number": node.sequence_number,
+                            "topics": node.topics or [],
                         }
                     )
 

@@ -373,6 +373,7 @@ class AdvancedCompressionManager:
                         compression_level=CompressionLevel.SUMMARY,
                         summary=result.compressed_content,
                         metadata=result.metadata,
+                        topics=result.topics_extracted,
                     )
 
                 results["summary_compressed"] = len(summary_results)
@@ -406,6 +407,7 @@ class AdvancedCompressionManager:
                         compression_level=CompressionLevel.ARCHIVE,
                         summary=result.compressed_content,
                         metadata=result.metadata,
+                        topics=result.topics_extracted,
                     )
 
                 results["archive_compressed"] = len(archive_results)
