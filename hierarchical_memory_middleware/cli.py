@@ -239,11 +239,16 @@ def chat(
         "--export-dir",
         help="Directory for real-time conversation exports",
     ),
+    stream: bool = typer.Option(
+        True,
+        "--stream/--no-stream",
+        help="Enable streaming responses (default: True)",
+    ),
 ):
     """Start an interactive chat session with MCP memory tools."""
     asyncio.run(
         _chat_session(
-            conversation_id, name, model, db_path, recent_limit, mcp_port, export_dir
+            conversation_id, name, model, db_path, recent_limit, mcp_port, export_dir, stream
         )
     )
 
@@ -256,6 +261,7 @@ async def _chat_session(
     recent_limit: Optional[int],
     mcp_port: Optional[int],
     export_dir: str,
+    stream: bool,
 ):
     """Run the interactive chat session with MCP integration."""
     # Load configuration
@@ -279,7 +285,8 @@ async def _chat_session(
     console.print(f"📄 Database: {config.db_path}")
     console.print(f"🤖 Model: {config.work_model}")
     console.print(f"🔗 Recent nodes limit: {config.recent_node_limit}")
-    console.print(f"📊 Summary threshold: {config.summary_threshold}")
+    console.print(f"📈 Summary threshold: {config.summary_threshold}")
+    console.print(f"⚡ Streaming: {'Enabled' if stream else 'Disabled'}")
 
     # Setup MCP server (required)
     mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
@@ -409,18 +416,36 @@ async def _chat_session(
                     continue
 
                 # Generate AI response
-                console.print("[bold green]🤖 Thinking...[/bold green]")
-                response = await manager.chat(user_input)
+                if stream:
+                    # Streaming mode
+                    console.print("[bold green]🤖 Assistant:[/bold green]")
+                    console.print("┌─ [green]Response[/green] ──────────────────────────────────────────────────────────────────┐")
 
-                # Display response
-                console.print(
-                    Panel(
-                        Text(response, style="white"),
-                        title="🤖 Assistant",
-                        border_style="green",
+                    # Stream the response
+                    response_chunks = []
+                    async for chunk in manager.chat_stream(user_input):
+                        console.print(chunk, end="", style="white")
+                        response_chunks.append(chunk)
+
+                    # Add bottom border
+                    console.print()
+                    console.print("└────────────────────────────────────────────────────────────────────────────────┘")
+                    console.print()
+                    response = ''.join(response_chunks)
+                else:
+                    # Non-streaming mode
+                    console.print("[bold green]🤖 Thinking...[/bold green]")
+                    response = await manager.chat(user_input)
+
+                    # Display response in panel
+                    console.print(
+                        Panel(
+                            Text(response, style="white"),
+                            title="🤖 Assistant",
+                            border_style="green",
+                        )
                     )
-                )
-                console.print()
+                    console.print()
 
                 # Save conversation state
                 await save_conversation_to_json(manager, conv_id, export_dir)
@@ -1144,6 +1169,7 @@ async def _switch_conversation(
             None,
             mcp_port,
             ".conversations",
+            True,  # Enable streaming by default
         )
     except ValueError as e:
         console.print(f"[red]❌ {e}[/red]")

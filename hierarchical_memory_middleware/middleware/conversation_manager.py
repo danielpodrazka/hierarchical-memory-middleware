@@ -485,6 +485,89 @@ class HierarchicalConversationManager:
 
         return "\n".join(content_parts)
 
+    async def chat_stream(self, user_message: str):
+        """Streaming version of chat with hierarchical memory integration."""
+        if not self.conversation_id:
+            raise ValueError("No active conversation. Call start_conversation() first.")
+
+        try:
+            # Clear tool tracking for new conversation turn
+            self._current_tool_calls = []
+            self._current_tool_results = []
+
+            full_response_text = ""
+            final_response = None
+
+            # Simple response-like object for compatibility with existing code
+            class MockResponse:
+                def __init__(self, output_text):
+                    self.output = output_text
+                    self._usage = None
+                def usage(self):
+                    return self._usage
+
+            # Generate AI response using PydanticAI streaming
+            if self.has_mcp_tools:
+                async with self.work_agent.run_mcp_servers():
+                    async with self.work_agent.run_stream(user_prompt=user_message) as stream_result:
+                        async for chunk in stream_result.stream_text(delta=True):
+                            if chunk:
+                                full_response_text += chunk
+                                yield chunk
+                        final_response = MockResponse(full_response_text)
+            else:
+                async with self.work_agent.run_stream(user_prompt=user_message) as stream_result:
+                    async for chunk in stream_result.stream_text(delta=True):
+                        if chunk:
+                            full_response_text += chunk
+                            yield chunk
+                    final_response = MockResponse(full_response_text)
+
+            # Save nodes after streaming is complete
+            user_node = await self.storage.save_conversation_node(
+                conversation_id=self.conversation_id,
+                node_type=NodeType.USER,
+                content=user_message,
+            )
+
+            # Extract token usage from final response
+            tokens_used = None
+            try:
+                if hasattr(final_response, "usage"):
+                    if callable(final_response.usage):
+                        usage_info = final_response.usage()
+                        tokens_used = getattr(usage_info, "total_tokens", None)
+                    else:
+                        usage_info = final_response.usage
+                        tokens_used = usage_info.get("total_tokens", None)
+            except Exception as e:
+                logger.debug(f"Could not extract token usage: {e}")
+                tokens_used = None
+
+            # Build comprehensive content including tool calls and results
+            comprehensive_content = self._build_comprehensive_content(final_response)
+
+            ai_node = await self.storage.save_conversation_node(
+                conversation_id=self.conversation_id,
+                node_type=NodeType.AI,
+                content=comprehensive_content,
+                tokens_used=tokens_used,
+                ai_components={
+                    "assistant_text": full_response_text,
+                    "model_used": self.config.work_model,
+                    "tool_calls": self._extract_tool_calls(final_response),
+                    "tool_results": self._extract_tool_results(final_response),
+                },
+            )
+
+            await self._check_and_compress()
+            # Streaming complete
+
+        except Exception as e:
+            logger.error(f"Error in streaming chat: {str(e)}", exc_info=True)
+            yield f"Error: {str(e)}"
+            return  # End generator on error
+
     async def chat(self, user_message: str) -> str:
         """Main conversation interface with hierarchical memory integration."""
         if not self.conversation_id:
