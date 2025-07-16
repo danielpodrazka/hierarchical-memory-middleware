@@ -27,8 +27,8 @@ To use Moonshot models, follow these steps:
 ## 📋 Supported Models
 
 ### Anthropic Claude
-- `claude-4-sonnet` (Claude 3.5 Sonnet)
-- `claude-4-haiku` (Claude 3.5 Haiku)
+- `claude-sonnet-4` (Claude 3.5 Sonnet)
+- `claude-3-5-haiku` (Claude 3.5 Haiku)
 - **API Key**: `ANTHROPIC_API_KEY`
 
 ### OpenAI
@@ -68,7 +68,7 @@ MOONSHOT_API_KEY=your_moonshot_api_key
 ### Mixed Provider Setup
 ```bash
 # Use Claude for main work, GPT-4o-mini for summaries
-WORK_MODEL=claude-4-sonnet
+WORK_MODEL=claude-sonnet-4
 SUMMARY_MODEL=gpt-4o-mini
 ANTHROPIC_API_KEY=your_claude_key
 OPENAI_API_KEY=your_openai_key
@@ -103,7 +103,7 @@ from hierarchical_memory_middleware.model_manager import ModelManager
 
 # List all available models
 models = ModelManager.list_available_models()
-print(models)  # {'moonshot-v1-128k': 'moonshot', 'claude-4-sonnet': 'anthropic', ...}
+print(models)  # {'moonshot-v1-128k': 'moonshot', 'claude-sonnet-4': 'anthropic', ...}
 
 # Check if you have the required API keys
 if ModelManager.validate_model_access("moonshot-v1-128k"):

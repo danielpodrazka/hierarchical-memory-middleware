@@ -20,7 +20,7 @@ class TestToolCallExtraction:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-123")
         config = Config(
             db_path=str(tmp_path / "test.db"),
-            work_model="claude-4-sonnet",
+            work_model="claude-sonnet-4",
             log_tool_calls=True,
         )
         storage = DuckDBStorage(config.db_path)

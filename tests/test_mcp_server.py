@@ -19,8 +19,8 @@ def temp_config(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-123")
     config = Config(
         db_path=":memory:",
-        work_model="claude-4-sonnet",
-        summary_model="claude-4-sonnet",
+        work_model="claude-sonnet-4",
+        summary_model="claude-sonnet-4",
         recent_node_limit=5,
     )
 

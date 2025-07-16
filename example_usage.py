@@ -132,7 +132,7 @@ async def demo_multiple_models():
     
     # Test models that have API keys
     test_models = []
-    for model_name in ["claude-4-sonnet", "gpt-4o", "moonshot-v1-128k", "deepseek-chat", "gemini-2-5-flash", "gemini-1-5-pro"]:
+    for model_name in ["claude-sonnet-4", "gpt-4o", "moonshot-v1-128k", "deepseek-chat", "gemini-2-5-flash", "gemini-1-5-pro"]:
         if ModelManager.validate_model_access(model_name):
             test_models.append(model_name)
     

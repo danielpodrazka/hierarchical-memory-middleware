@@ -323,7 +323,7 @@ class ModelRegistry(BaseModel):
 DEFAULT_MODEL_REGISTRY = ModelRegistry(
     models={
         # Anthropic Claude models
-        "claude-4-sonnet": ModelConfig(
+        "claude-sonnet-4": ModelConfig(
             provider=ModelProvider.ANTHROPIC,
             model_name="claude-sonnet-4-20250514",
             api_key_env="ANTHROPIC_API_KEY",
@@ -331,7 +331,7 @@ DEFAULT_MODEL_REGISTRY = ModelRegistry(
             supports_functions=True,
             metadata={"family": "claude-3.5", "tier": "premium"},
         ),
-        "claude-4-haiku": ModelConfig(
+        "claude-3-5-haiku": ModelConfig(
             provider=ModelProvider.ANTHROPIC,
             model_name="claude-3-5-haiku-20241022",
             api_key_env="ANTHROPIC_API_KEY",

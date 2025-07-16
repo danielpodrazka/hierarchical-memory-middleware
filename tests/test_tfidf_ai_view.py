@@ -29,7 +29,7 @@ class TestTfidfAiView:
             db_path=":memory:",
             recent_node_limit=3,
             summary_threshold=5,
-            work_model="claude-4-haiku",
+            work_model="claude-3-5-haiku",
         )
 
     @pytest.fixture
@@ -75,7 +75,7 @@ class TestTfidfAiView:
                 content=f"I'd be happy to help you learn about {message.split()[-1] if message.split() else 'that topic'}!",
                 ai_components={
                     "assistant_text": f"Response to: {message}",
-                    "model_used": "claude-4-haiku",
+                    "model_used": "claude-3-5-haiku",
                     "tool_calls": [],
                     "tool_results": [],
                 },
