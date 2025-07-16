@@ -43,20 +43,17 @@ def check_mcp_server_running(mcp_url: str) -> bool:
         # Add proper Accept header for MCP Streamable HTTP transport
         headers = {
             "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        
+
         # Send MCP initialization request
         init_request = {
             "jsonrpc": "2.0",
             "id": "test-init",
             "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {}
-            }
+            "params": {"protocolVersion": "2024-11-05", "capabilities": {}},
         }
-        
+
         response = requests.post(mcp_url, headers=headers, json=init_request, timeout=2)
         return response.status_code == 200
     except Exception:
@@ -67,20 +64,22 @@ async def resolve_conversation_id(partial_id: str, db_path: str) -> str:
     """Resolve a partial conversation ID to a full ID, Docker-style."""
     try:
         from .storage import DuckDBStorage
-        
+
         storage = DuckDBStorage(db_path)
         conversations = await storage.get_conversation_list()
-        
+
         # Find conversations that start with the partial ID
-        matches = [conv for conv in conversations if conv['id'].startswith(partial_id)]
-        
+        matches = [conv for conv in conversations if conv["id"].startswith(partial_id)]
+
         if len(matches) == 0:
-            raise ValueError(f"No conversation found with ID starting with '{partial_id}'")
+            raise ValueError(
+                f"No conversation found with ID starting with '{partial_id}'"
+            )
         elif len(matches) == 1:
-            return matches[0]['id']
+            return matches[0]["id"]
         else:
             # Multiple matches - show ambiguous error
-            match_ids = [conv['id'][:12] + '...' for conv in matches]
+            match_ids = [conv["id"][:12] + "..." for conv in matches]
             raise ValueError(
                 f"Ambiguous conversation ID '{partial_id}'. Matches: {', '.join(match_ids)}"
             )
@@ -97,12 +96,12 @@ async def resolve_conversation_name(name: str, db_path: str) -> str:
         conversations = await storage.get_conversation_list()
 
         # Find conversations that match the name
-        matches = [conv for conv in conversations if conv.get('name') == name]
+        matches = [conv for conv in conversations if conv.get("name") == name]
 
         if len(matches) == 0:
             raise ValueError(f"No conversation found with name '{name}'")
         elif len(matches) == 1:
-            return matches[0]['id']
+            return matches[0]["id"]
         else:
             # Multiple matches - should not happen due to unique constraints
             raise ValueError(f"Multiple conversations found with name '{name}'")
@@ -117,13 +116,13 @@ async def resolve_conversation_identifier(identifier: str, db_path: str) -> str:
         return await resolve_conversation_id(identifier, db_path)
     except ValueError:
         pass
-    
+
     # Then try as name
     try:
         return await resolve_conversation_name(identifier, db_path)
     except ValueError:
         pass
-    
+
     # If neither works, raise an error
     raise ValueError(f"No conversation found with identifier '{identifier}'")
 
@@ -296,34 +295,46 @@ async def _chat_session(
         # Resolve conversation identifier
         resolved_conversation_id = None
         if conversation_id and name:
-            console.print("[red]❌ Cannot specify both --conversation-id and --name[/red]")
+            console.print(
+                "[red]❌ Cannot specify both --conversation-id and --name[/red]"
+            )
             sys.exit(1)
         elif conversation_id:
             # Use conversation ID (supports partial matching)
             try:
-                resolved_conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
-                console.print(f"[dim]Resolved conversation ID: {resolved_conversation_id}[/dim]")
+                resolved_conversation_id = await resolve_conversation_id(
+                    conversation_id, config.db_path
+                )
+                console.print(
+                    f"[dim]Resolved conversation ID: {resolved_conversation_id}[/dim]"
+                )
             except ValueError as e:
                 console.print(f"[red]❌ {e}[/red]")
                 sys.exit(1)
         elif name:
             # Use conversation name
             try:
-                resolved_conversation_id = await resolve_conversation_name(name, config.db_path)
-                console.print(f"[dim]Resolved conversation '{name}' to ID: {resolved_conversation_id}[/dim]")
+                resolved_conversation_id = await resolve_conversation_name(
+                    name, config.db_path
+                )
+                console.print(
+                    f"[dim]Resolved conversation '{name}' to ID: {resolved_conversation_id}[/dim]"
+                )
             except ValueError:
                 # Name not found, will create new conversation with this name
-                console.print(f"[yellow]Creating new conversation with name '{name}'[/yellow]")
+                console.print(
+                    f"[yellow]Creating new conversation with name '{name}'[/yellow]"
+                )
                 resolved_conversation_id = None
 
         # Start or resume conversation
         conv_id = await manager.start_conversation(resolved_conversation_id)
-        
+
         # Set conversation name if specified and it's a new conversation
         if name and resolved_conversation_id is None:
             await manager.set_conversation_name(conv_id, name)
             console.print(f"[green]✅ Named conversation '{name}' created[/green]")
-        
+
         console.print(f"[blue]🔗 Conversation ID: {conv_id}[/blue]")
         if name:
             console.print(f"[blue]📝 Conversation Name: {name}[/blue]")
@@ -467,6 +478,9 @@ async def handle_chat_command(command: str, manager, conv_id: str, export_dir: s
             "   [yellow]/stats[/yellow]               - Show detailed statistics"
         )
         console.print(
+            "   [yellow]/rename <new_name>[/yellow]        - Rename current conversation"
+        )
+        console.print(
             "   [yellow]/quit[/yellow], [yellow]/exit[/yellow]         - Exit chat"
         )
 
@@ -513,6 +527,23 @@ async def handle_chat_command(command: str, manager, conv_id: str, export_dir: s
 
     elif cmd == "/stats":
         await show_detailed_stats(manager)
+
+    elif cmd == "/rename":
+        if args:
+            try:
+                success = await manager.set_conversation_name(conv_id, args.strip())
+                if success:
+                    console.print(
+                        f"[green]✅ Conversation renamed to '{args.strip()}'[/green]"
+                    )
+                else:
+                    console.print(
+                        f"[red]❌ Failed to rename conversation. Name '{args.strip()}' may already exist.[/red]"
+                    )
+            except Exception as e:
+                console.print(f"[red]❌ Error renaming conversation: {e}[/red]")
+        else:
+            console.print("[red]❌ Usage: /rename <n>[/red]")
 
     else:
         console.print(
@@ -991,7 +1022,9 @@ async def _search_memory(
     # Resolve partial conversation ID if provided
     if conversation_id:
         try:
-            conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
+            conversation_id = await resolve_conversation_id(
+                conversation_id, config.db_path
+            )
             console.print(f"[dim]Resolved conversation ID: {conversation_id}[/dim]")
         except ValueError as e:
             console.print(f"[red]❌ {e}[/red]")
@@ -1090,14 +1123,24 @@ async def _switch_conversation(
 
     # Resolve conversation identifier
     try:
-        conversation_id = await resolve_conversation_identifier(identifier, config.db_path)
+        conversation_id = await resolve_conversation_identifier(
+            identifier, config.db_path
+        )
         console.print(f"[green]✅ Switching to conversation: {conversation_id}[/green]")
-        
+
         # Start chat session with resolved conversation
-        await _chat_session(conversation_id, None, None, config.db_path, None, mcp_port, ".conversations")
+        await _chat_session(
+            conversation_id,
+            None,
+            None,
+            config.db_path,
+            None,
+            mcp_port,
+            ".conversations",
+        )
     except ValueError as e:
         console.print(f"[red]❌ {e}[/red]")
-        
+
         # Show available conversations
         console.print("\n[yellow]Available conversations:[/yellow]")
         await _list_conversations(config.db_path)
