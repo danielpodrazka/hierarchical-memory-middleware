@@ -41,7 +41,7 @@ def setup_cli_logging(
 ):
     """Setup logging for all CLI commands."""
     config = Config.from_env()
-    config.setup_logging()
+    config.setup_cli_logging()
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
 

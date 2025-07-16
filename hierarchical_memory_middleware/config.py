@@ -35,6 +35,7 @@ class Config:
     log_file: Optional[str] = "hierarchical_memory.log"
     enable_file_logging: bool = True
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    cli_log_format: str = "%(asctime)s - %(message)s"
     debug_mode: bool = False
 
     @classmethod
@@ -92,6 +93,9 @@ class Config:
             enable_file_logging=get_env_bool("ENABLE_FILE_LOGGING", True),
             log_format=os.getenv(
                 "LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            ),
+            cli_log_format=os.getenv(
+                "CLI_LOG_FORMAT", "%(asctime)s - %(message)s"
             ),
             debug_mode=get_env_bool("DEBUG_MODE", False),
         )
@@ -156,4 +160,58 @@ class Config:
 
         logging.info(
             f"Logging configured - Level: {self.log_level}, Debug mode: {self.debug_mode}, File: {self.log_file if self.enable_file_logging else 'None'}"
+        )
+
+    def setup_cli_logging(self) -> None:
+        """Set up CLI-specific logging configuration with simplified format."""
+        import logging
+        from logging.handlers import RotatingFileHandler
+
+        # Set root logger level
+        logging.getLogger().setLevel(
+            getattr(logging, self.log_level.upper(), logging.INFO)
+        )
+
+        # Create CLI-specific formatter (simplified format)
+        cli_formatter = logging.Formatter(self.cli_log_format)
+
+        # Clear existing handlers to avoid duplicates
+        root_logger = logging.getLogger()
+        root_logger.handlers.clear()
+
+        # Always add console handler with CLI format
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(cli_formatter)
+        root_logger.addHandler(console_handler)
+
+        # Add file handler if enabled (uses standard format for file logging)
+        if self.enable_file_logging and self.log_file:
+            file_handler = RotatingFileHandler(
+                self.log_file,
+                maxBytes=10 * 1024 * 1024,  # 10MB
+                backupCount=5,
+            )
+            # Use standard format for file logging
+            file_formatter = logging.Formatter(self.log_format)
+            file_handler.setFormatter(file_formatter)
+            root_logger.addHandler(file_handler)
+
+        # Configure third-party library logging levels based on debug mode
+        if not self.debug_mode:
+            # In non-debug mode, suppress verbose logging from third-party libraries
+            logging.getLogger("httpx").setLevel(logging.WARNING)
+            logging.getLogger("mcp").setLevel(logging.WARNING)
+            logging.getLogger("mcp.client").setLevel(logging.WARNING)
+            logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
+            logging.getLogger("requests").setLevel(logging.WARNING)
+            logging.getLogger("urllib3").setLevel(logging.WARNING)
+        else:
+            # In debug mode, allow all logging
+            logging.getLogger("httpx").setLevel(logging.DEBUG)
+            logging.getLogger("mcp").setLevel(logging.DEBUG)
+            logging.getLogger("mcp.client").setLevel(logging.DEBUG)
+            logging.getLogger("mcp.client.streamable_http").setLevel(logging.DEBUG)
+
+        logging.info(
+            f"CLI logging configured - Level: {self.log_level}, Debug mode: {self.debug_mode}, File: {self.log_file if self.enable_file_logging else 'None'}"
         )
