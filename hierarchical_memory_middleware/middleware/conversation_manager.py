@@ -257,13 +257,7 @@ class HierarchicalConversationManager:
                             "node_id": node.node_id,
                             "node_type": "ai",
                             "content": (
-                                node.content
-                                if (
-                                    node.level == CompressionLevel.META
-                                    and node.summary_metadata
-                                    and isinstance(node.summary_metadata, dict)
-                                    and node.summary_metadata.get("is_group_node")
-                                )
+                                node.content if node.level == CompressionLevel.META
                                 else (node.summary or node.content)
                             ),
                             "is_summary": True,
