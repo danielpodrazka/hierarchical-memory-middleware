@@ -451,8 +451,7 @@ class DuckDBStorage:
     def _enhance_node_summary(self, node: ConversationNode) -> ConversationNode:
         """Enhance summary/archive nodes by appending line count information."""
         # Only enhance nodes that have been compressed (not FULL level) and have a summary
-        if node.level != CompressionLevel.FULL and node.summary:
-            # Create a copy of the node with enhanced summary
+        if node.level == CompressionLevel.SUMMARY and node.summary:
             enhanced_summary = (
                 f"ID {node.node_id}: {node.summary} ({node.line_count} lines)"
             )
@@ -496,14 +495,19 @@ class DuckDBStorage:
         from datetime import datetime
         import json
 
-        # Create content for the META node
-        meta_content = f"META GROUP: {meta_group.summary}"
+        # Create clear, actionable content for the META node
+        topics_info = f" Topics: {', '.join(meta_group.main_topics[:3])}" if meta_group.main_topics else ""
         
-        # Create comprehensive summary with group information
+        meta_content = (
+            f"META GROUP containing nodes {meta_group.start_node_id}-{meta_group.end_node_id} "
+            f"({meta_group.node_count} nodes, {meta_group.total_lines} lines).{topics_info}\n"
+            f"To expand this group, use expand_node() with any node ID from {meta_group.start_node_id} to {meta_group.end_node_id}."
+        )
+
+        # Create summary for storage (not displayed to AI)
         meta_summary = (
-            f"Meta group of nodes {meta_group.start_node_id}-{meta_group.end_node_id}: "
-            f"{meta_group.summary} "
-            f"(groups {meta_group.node_count} nodes, {meta_group.total_lines} total lines)"
+            f"META: Nodes {meta_group.start_node_id}-{meta_group.end_node_id} "
+            f"({meta_group.node_count} nodes, {meta_group.total_lines} lines)"
         )
 
         # Create metadata about the grouped nodes

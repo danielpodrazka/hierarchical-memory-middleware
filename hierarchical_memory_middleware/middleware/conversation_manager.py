@@ -43,22 +43,21 @@ class HierarchicalConversationManager:
 
         # Initialize advanced hierarchical compression system
         self.compressor = SimpleCompressor(max_words=8)
-        
+
         # Create hierarchy thresholds (configurable)
         self.hierarchy_thresholds = HierarchyThresholds(
             summary_threshold=config.recent_node_limit,  # Use config setting
-            meta_threshold=50,    # SUMMARY nodes before META grouping
-            archive_threshold=200, # META groups before ARCHIVE
-            meta_group_size=20,   # Minimum nodes per META group
-            meta_group_max=40     # Maximum nodes per META group
+            meta_threshold=50,  # SUMMARY nodes before META grouping
+            archive_threshold=200,  # META groups before ARCHIVE
+            meta_group_size=20,  # Minimum nodes per META group
+            meta_group_max=40,  # Maximum nodes per META group
         )
-        
+
         # Initialize advanced compression manager
         self.compression_manager = AdvancedCompressionManager(
-            base_compressor=self.compressor,
-            thresholds=self.hierarchy_thresholds
+            base_compressor=self.compressor, thresholds=self.hierarchy_thresholds
         )
-        
+
         # Keep the simple compression manager for backward compatibility
         self.simple_compression_manager = CompressionManager(
             compressor=self.compressor, recent_node_limit=config.recent_node_limit
@@ -228,7 +227,13 @@ class HierarchicalConversationManager:
             # Add compressed context (already the most recent from get_recent_compressed_nodes)
             for node in compressed_nodes:
                 if node.node_type == NodeType.USER:
-                    content = node.summary or node.content
+                    # For META group nodes, use content (clear instructions); for others, use summary (with ID prefix)
+                    if node.level == CompressionLevel.META:
+                        content = node.content  # META groups have instructional content
+                    else:
+                        content = (
+                            node.summary or node.content
+                        )  # Regular compressed nodes use summary
                     memory_messages.append(
                         ModelRequest(parts=[UserPromptPart(content=content)])
                     )
@@ -251,7 +256,16 @@ class HierarchicalConversationManager:
                         {
                             "node_id": node.node_id,
                             "node_type": "ai",
-                            "content": node.summary or node.content,
+                            "content": (
+                                node.content
+                                if (
+                                    node.level == CompressionLevel.META
+                                    and node.summary_metadata
+                                    and isinstance(node.summary_metadata, dict)
+                                    and node.summary_metadata.get("is_group_node")
+                                )
+                                else (node.summary or node.content)
+                            ),
                             "is_summary": True,
                             "sequence_number": node.sequence_number,
                         }
@@ -596,14 +610,17 @@ class HierarchicalConversationManager:
             logger.info(f"Checking hierarchy compression for {len(all_nodes)} nodes")
 
             # Use advanced hierarchy compression system
-            compression_results = await self.compression_manager.process_hierarchy_compression(
-                nodes=all_nodes,
-                storage=self.storage
+            compression_results = (
+                await self.compression_manager.process_hierarchy_compression(
+                    nodes=all_nodes, storage=self.storage
+                )
             )
 
             # Log the results
             if compression_results.get("error"):
-                logger.error(f"Hierarchy compression error: {compression_results['error']}")
+                logger.error(
+                    f"Hierarchy compression error: {compression_results['error']}"
+                )
                 return
 
             total_processed = compression_results.get("total_processed", 0)
@@ -618,22 +635,28 @@ class HierarchicalConversationManager:
                 logger.debug("No hierarchy compression needed at this time")
 
         except Exception as e:
-            logger.error(f"Error during advanced hierarchy compression: {str(e)}", exc_info=True)
-            
+            logger.error(
+                f"Error during advanced hierarchy compression: {str(e)}", exc_info=True
+            )
+
             # Fallback to simple compression if advanced fails
             try:
                 logger.info("Falling back to simple compression system")
-                
+
                 # Use the simple compression manager as fallback
-                nodes_to_compress = self.simple_compression_manager.identify_nodes_to_compress(
-                    all_nodes
-                )
-                
-                if nodes_to_compress:
-                    compression_results = self.simple_compression_manager.compress_nodes(
-                        nodes_to_compress
+                nodes_to_compress = (
+                    self.simple_compression_manager.identify_nodes_to_compress(
+                        all_nodes
                     )
-                    
+                )
+
+                if nodes_to_compress:
+                    compression_results = (
+                        self.simple_compression_manager.compress_nodes(
+                            nodes_to_compress
+                        )
+                    )
+
                     # Update nodes in storage using simple compression
                     for result in compression_results:
                         await self.storage.compress_node(
@@ -643,11 +666,16 @@ class HierarchicalConversationManager:
                             summary=result.compressed_content,
                             metadata=result.metadata,
                         )
-                    
-                    logger.info(f"Fallback compression completed: {len(compression_results)} nodes")
-                    
+
+                    logger.info(
+                        f"Fallback compression completed: {len(compression_results)} nodes"
+                    )
+
             except Exception as fallback_error:
-                logger.error(f"Fallback compression also failed: {str(fallback_error)}", exc_info=True)
+                logger.error(
+                    f"Fallback compression also failed: {str(fallback_error)}",
+                    exc_info=True,
+                )
 
     async def get_node_details(
         self, node_id: int, conversation_id: str
