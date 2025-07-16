@@ -1303,3 +1303,132 @@ async def test_conversation_manager_logging(mock_config, caplog):
             await manager.chat("Error message")
 
             assert "Error in chat" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_streaming_text_after_tool_calls_bug(mock_config):
+    """Test the bug where text after tool calls is not saved in streaming mode."""
+    # This test reproduces the bug where AI responds with:
+    # 1. Initial text
+    # 2. Tool call
+    # 3. More text (this gets lost)
+    
+    manager = HierarchicalConversationManager(mock_config, mcp_server_url="http://localhost:3000")
+    await manager.start_conversation("test-conv-1")
+
+    # Mock streaming response that has text -> tool call -> more text
+    class MockStreamResult:
+        def __init__(self):
+            self.text_chunks = [
+                "I'll help you with that. ",  # Initial text
+                "Let me check something first. ",  # More initial text
+                # Tool call happens here (not in text stream)
+                "Based on the tool result, ",  # Text after tool call
+                "here's what I found: ",  # More text after tool call
+                "The answer is 42."  # Final text
+            ]
+            self.chunk_index = 0
+            
+        async def stream_text(self, delta=True):
+            """Mock streaming text that simulates tool calls interrupting text flow"""
+            for chunk in self.text_chunks:
+                yield chunk
+                self.chunk_index += 1
+                # Simulate tool call happening after 2nd chunk
+                if self.chunk_index == 2:
+                    # This is where the tool call would happen
+                    # The bug is that streaming might not capture subsequent text properly
+                    pass
+
+        async def __aenter__(self):
+            return self
+            
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    # Create mock nodes to return
+    mock_user_node = Mock()
+    mock_user_node.node_id = 1
+    mock_ai_node = Mock()
+    mock_ai_node.node_id = 2
+
+    with (
+        patch.object(
+            manager.work_agent, "run_stream", new_callable=AsyncMock
+        ) as mock_run_stream,
+        patch.object(
+            manager.work_agent, "run_mcp_servers"
+        ) as mock_mcp_context,
+        patch.object(
+            manager.storage, "save_conversation_node", new_callable=AsyncMock
+        ) as mock_save,
+        patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
+    ):
+        # Set up MCP context manager
+        mock_mcp_context.return_value.__aenter__ = AsyncMock()
+        mock_mcp_context.return_value.__aexit__ = AsyncMock()
+        
+        # Set up streaming result with proper context manager
+        mock_stream_result = MockStreamResult()
+        # Mock run_stream to return the context manager directly
+        mock_run_stream.return_value = mock_stream_result
+        
+        # Configure save_conversation_node to return mock nodes
+        mock_save.side_effect = [mock_user_node, mock_ai_node]
+
+        # Simulate tool calls during streaming
+        manager._current_tool_calls = [
+            {
+                "tool_name": "search_web",
+                "tool_call_id": "tool_call_0_search_web",
+                "args": {"query": "test query"}
+            }
+        ]
+        manager._current_tool_results = [
+            {
+                "tool_call_id": "tool_call_0_search_web",
+                "content": "Found 42 results",
+                "timestamp": None,
+            }
+        ]
+
+        # Collect all streaming output
+        streamed_chunks = []
+        async for chunk in manager.chat_stream("What's the answer?"):
+            streamed_chunks.append(chunk)
+
+        # Verify all text chunks were streamed
+        full_streamed_text = "".join(streamed_chunks)
+        assert "I'll help you with that. " in full_streamed_text
+        assert "Let me check something first. " in full_streamed_text
+        assert "Based on the tool result, " in full_streamed_text
+        assert "here's what I found: " in full_streamed_text
+        assert "The answer is 42." in full_streamed_text
+
+        # Check that save_conversation_node was called twice (user + AI)
+        assert mock_save.call_count == 2
+
+        # Get the AI node save call
+        ai_save_call = mock_save.call_args_list[1]
+        saved_ai_content = ai_save_call[1]["content"]
+
+        # BUG VERIFICATION: Check if post-tool-call text is saved
+        # This is the critical test - the bug causes this to fail
+        assert "Based on the tool result, " in saved_ai_content, "Text after tool call was lost!"
+        assert "here's what I found: " in saved_ai_content, "Text after tool call was lost!"
+        assert "The answer is 42." in saved_ai_content, "Final text after tool call was lost!"
+
+        # Also verify tool calls are properly included in comprehensive content
+        assert "=== TOOL CALLS ===" in saved_ai_content
+        assert "search_web" in saved_ai_content
+        assert "=== TOOL RESULTS ===" in saved_ai_content
+        assert "Found 42 results" in saved_ai_content
+
+        # Verify the AI components contain the streamed text
+        ai_components = ai_save_call[1]["ai_components"]
+        assistant_text = ai_components["assistant_text"]
+        
+        # This should contain ALL the text that was streamed
+        assert "Based on the tool result, " in assistant_text
+        assert "here's what I found: " in assistant_text
+        assert "The answer is 42." in assistant_text

@@ -544,6 +544,10 @@ class HierarchicalConversationManager:
                 logger.debug(f"Could not extract token usage: {e}")
                 tokens_used = None
 
+            # Ensure final_response is properly initialized
+            if final_response is None:
+                final_response = MockResponse(full_response_text)
+
             # Build comprehensive content including tool calls and results
             comprehensive_content = self._build_comprehensive_content(final_response)
 
