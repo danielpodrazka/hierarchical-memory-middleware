@@ -21,7 +21,7 @@ from .config import Config
 from .middleware.conversation_manager import HierarchicalConversationManager
 from .models import CompressionLevel, NodeType
 
-# Logging will be configured by Config.setup_logging()
+# Logging will be configured by the CLI callback (setup_cli_logging)
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(
@@ -29,6 +29,21 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 console = Console()
+
+
+@app.callback()
+def setup_cli_logging(
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable debug logging for all commands",
+    ),
+):
+    """Setup logging for all CLI commands."""
+    config = Config.from_env()
+    config.setup_logging()
+    if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
 
 def check_mcp_server_running(mcp_url: str) -> bool:
@@ -224,11 +239,6 @@ def chat(
         "--export-dir",
         help="Directory for real-time conversation exports",
     ),
-    debug: bool = typer.Option(
-        False,
-        "--debug",
-        help="Enable debug mode (show verbose logs)",
-    ),
 ):
     """Start an interactive chat session with MCP memory tools."""
     asyncio.run(
@@ -264,9 +274,6 @@ async def _chat_session(
     # Configure test-specific settings
     config.recent_node_limit = config.recent_node_limit or 5
     config.summary_threshold = config.summary_threshold or 20
-
-    # Setup logging configuration
-    config.setup_logging()
 
     console.print("[bold green]🚀 Hierarchical Memory Middleware[/bold green]")
     console.print(f"📄 Database: {config.db_path}")
@@ -921,10 +928,6 @@ async def _show_summaries(
     if mcp_port:
         config.mcp_port = mcp_port
 
-    # Setup logging configuration
-    config.setup_logging()
-
-    # Resolve partial conversation ID
     try:
         conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
         console.print(f"[dim]Resolved conversation ID: {conversation_id}[/dim]")
@@ -975,10 +978,6 @@ async def _expand_node(
     if mcp_port:
         config.mcp_port = mcp_port
 
-    # Setup logging configuration
-    config.setup_logging()
-
-    # Resolve partial conversation ID
     try:
         conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
         console.print(f"[dim]Resolved conversation ID: {conversation_id}[/dim]")
@@ -1030,10 +1029,6 @@ async def _search_memory(
     if mcp_port:
         config.mcp_port = mcp_port
 
-    # Setup logging configuration
-    config.setup_logging()
-
-    # Resolve partial conversation ID if provided
     if conversation_id:
         try:
             conversation_id = await resolve_conversation_id(
@@ -1044,7 +1039,6 @@ async def _search_memory(
             console.print(f"[red]❌ {e}[/red]")
             sys.exit(1)
 
-    # Setup MCP
     mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
     if not check_mcp_server_running(mcp_server_url):
         console.print("[red]❌ MCP server is not running![/red]")
@@ -1074,9 +1068,6 @@ async def _list_conversations(db_path: Optional[str]):
     config = Config.from_env()
     if db_path:
         config.db_path = db_path
-
-    # Setup logging configuration
-    config.setup_logging()
 
     try:
         from .storage import DuckDBStorage
@@ -1138,10 +1129,6 @@ async def _switch_conversation(
     if mcp_port:
         config.mcp_port = mcp_port
 
-    # Setup logging configuration
-    config.setup_logging()
-
-    # Resolve conversation identifier
     try:
         conversation_id = await resolve_conversation_identifier(
             identifier, config.db_path
@@ -1194,9 +1181,6 @@ async def _export_conversation(
     if mcp_port:
         config.mcp_port = mcp_port
 
-    # Setup logging configuration
-    config.setup_logging()
-
     # Resolve partial conversation ID
     try:
         conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
@@ -1215,7 +1199,6 @@ async def _export_conversation(
         manager = HierarchicalConversationManager(config, mcp_server_url=mcp_server_url)
         await manager.start_conversation(conversation_id)
 
-        # Get conversation data
         summary = await manager.get_conversation_summary()
 
         if "error" in summary:
