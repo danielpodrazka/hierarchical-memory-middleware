@@ -479,7 +479,7 @@ async def test_hierarchical_memory_processor_empty_memory(mock_config):
             manager.storage, "get_recent_nodes", new_callable=AsyncMock
         ) as mock_recent,
         patch.object(
-            manager.storage, "get_conversation_nodes", new_callable=AsyncMock
+            manager.storage, "get_recent_hierarchical_nodes", new_callable=AsyncMock
         ) as mock_compressed,
     ):
         mock_recent.return_value = []
@@ -487,7 +487,11 @@ async def test_hierarchical_memory_processor_empty_memory(mock_config):
 
         result = await manager._hierarchical_memory_processor(messages)
 
-        assert result == messages
+        # With current implementation, context message is always added when there's a conversation_id
+        # So result should contain: [context_message] + original_messages
+        assert len(result) == 2  # context + original message
+        assert result[0].parts[0].content == "[Context: Conversation ID test-conv-1]"
+        assert result[1].parts[0].content == "Hello"
 
 
 @pytest.mark.asyncio
@@ -543,7 +547,7 @@ async def test_hierarchical_memory_processor_message_format(mock_config):
             manager.storage, "get_recent_nodes", new_callable=AsyncMock
         ) as mock_recent,
         patch.object(
-            manager.storage, "get_conversation_nodes", new_callable=AsyncMock
+            manager.storage, "get_recent_hierarchical_nodes", new_callable=AsyncMock
         ) as mock_compressed,
     ):
         mock_recent.return_value = [user_node, ai_node]
@@ -554,11 +558,13 @@ async def test_hierarchical_memory_processor_message_format(mock_config):
         user_messages = [msg for msg in result if isinstance(msg, ModelRequest)]
         ai_messages = [msg for msg in result if isinstance(msg, ModelResponse)]
 
-        assert len(user_messages) >= 1
-        assert len(ai_messages) >= 1
+        assert len(user_messages) >= 3  # context + user_node + current message
+        assert len(ai_messages) >= 1  # ai_node
 
-        user_content = user_messages[0].parts[0].content
-        assert user_content == "User message"
+        # First user message should be the context
+        assert user_messages[0].parts[0].content == "[Context: Conversation ID test-conv-1]"
+        # Second user message should be from memory
+        assert user_messages[1].parts[0].content == "User message"
 
         ai_content = ai_messages[0].parts[0].content
         assert ai_content == "AI response"
@@ -1254,7 +1260,7 @@ async def test_conversation_manager_logging(mock_config, caplog):
     """Test that appropriate log messages are generated."""
     import logging
 
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.DEBUG)  # Set to DEBUG to capture debug level logs
 
     # Mock setup_logging to prevent it from interfering with caplog
     with patch.object(mock_config, 'setup_logging'):
@@ -1285,6 +1291,7 @@ async def test_conversation_manager_logging(mock_config, caplog):
 
             await manager.chat("Test message")
 
+            # The log message is at debug level in current implementation
             assert (
                 f"Processed conversation turn (user: 1, ai: 2) in conversation {conv_id}"
                 in caplog.text
