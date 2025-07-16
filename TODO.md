@@ -10,6 +10,11 @@
 - ✅ **Working compression system**: Basic word truncation and topic extraction implemented
 - ✅ **PyArrow storage optimization**: Migrated from manual data conversion to PyArrow-based serialization with Pydantic field validators for cleaner, more maintainable code
 
+**Phase 6 CLI Enhancements Completed:**
+- ✅ **MCP server connection fix**: Resolved 406 Not Acceptable error by implementing proper MCP Streamable HTTP headers and initialization requests
+- ✅ **Docker-style partial ID matching**: Added support for partial conversation IDs (e.g., `d9` instead of `d922b57c-6a24-4b10-8411-c4208929aa2c`) with ambiguity detection
+- ✅ **Enhanced CLI usability**: All major CLI commands now support partial conversation ID resolution for better user experience
+
 **Current Status**: Phases 1-6 are complete! 🎉 The Hierarchical Memory Middleware now has a full production-ready CLI with comprehensive features. Ready to begin Phase 7 (Production Ready).
 
 **Next Priorities (Phase 7 - Production Ready):**
@@ -210,51 +215,50 @@ Now I can give you a complete answer about the refresh flow based on node 6...
 **Goal**: Create a production-ready CLI that provides a seamless conversational experience with full access to the hierarchical memory system.
 
 #### Core CLI Features
-- [ ] **Enhanced chat_demo.py**: Refactor current implementation with better structure and error handling
-- [ ] **MCP Function Support**: Implement CLI commands for all MCP server functions:
-  - [ ] `expand <node_id>` - Expand a compressed node to show full content
-  - [ ] `find <query>` - Search across all conversation nodes with regex support
-  - [ ] `show_summaries <start_node> <end_node>` - Display summary hierarchy for node range
+- [x] **Enhanced chat_demo.py**: Refactor current implementation with better structure and error handling
+- [x] **MCP Function Support**: Implement CLI commands for all MCP server functions:
+  - [x] `expand <node_id>` - Expand a compressed node to show full content
+  - [x] `find <query>` - Search across all conversation nodes with regex support
+  - [x] `show_summaries <start_node> <end_node>` - Display summary hierarchy for node range
   - [ ] `browse_hierarchy <level>` - Navigate through compression levels
-- [ ] **Interactive Commands**: Add special CLI commands beyond basic chat:
-  - [ ] `/help` - Show available commands and usage
-  - [ ] `/history` - Display conversation overview with node counts
-  - [ ] `/stats` - Show compression statistics and memory usage
-  - [ ] `/export <format>` - Export conversation to markdown/json/txt
+- [x] **Interactive Commands**: Add special CLI commands beyond basic chat:
+  - [x] `/help` - Show available commands and usage
+  - [x] `/history` - Display conversation overview with node counts
+  - [x] `/stats` - Show compression statistics and memory usage
+  - [x] `/export <format>` - Export conversation to markdown/json/txt
   - [ ] `/load <file>` - Load conversation from file
   - [ ] `/save <file>` - Save current conversation state
   - [ ] `/reset` - Start new conversation (with confirmation)
   - [ ] `/config` - Show/modify configuration settings
 
 #### User Experience Enhancements
-- [ ] **Rich Terminal Output**: Use rich library for:
-  - [ ] Colored output (user/assistant/system messages)
-  - [ ] Progress bars for long operations
-  - [ ] Formatted tables for summaries and stats
+- [x] **Rich Terminal Output**: Use rich library for:
+  - [x] Colored output (user/assistant/system messages)
+  - [x] Progress bars for long operations
+  - [x] Formatted tables for summaries and stats
   - [ ] Syntax highlighting for code blocks
-- [ ] **Session Management**: 
-  - [ ] Auto-save conversation state
-  - [ ] Resume previous conversations
-  - [ ] Named conversation sessions
+- [x] **Session Management**:
+  - [x] Auto-save conversation state
+  - [x] Resume previous conversations
+  - [x] Named conversation sessions
   - [ ] Session switching with `/switch <session_name>`
-- [ ] **Smart Input Handling**:
-  - [ ] Multi-line input support (end with Ctrl+D or empty line)
-  - [ ] Input history with arrow keys
+- [x] **Smart Input Handling**:
+  - [x] Multi-line input support (end with Ctrl+D or empty line)
+  - [x] Input history with arrow keys
   - [ ] Tab completion for commands
-  - [ ] Interrupt handling (Ctrl+C gracefully)
+  - [x] Interrupt handling (Ctrl+C gracefully)
 
 #### Configuration & Setup
-- [ ] **Command Line Arguments**:
-  - [ ] `--config <path>` - Custom config file
-  - [ ] `--session <name>` - Start specific session
-  - [ ] `--model <model>` - Override default LLM model
-  - [ ] `--verbose` - Enable debug logging
-  - [ ] `--no-mcp` - Disable MCP tools for testing
-- [ ] **Environment Setup**:
-  - [ ] Automatic config file creation on first run
-  - [ ] API key validation and setup wizard
-  - [ ] Database initialization and migration
-  - [ ] MCP server auto-start and health checking
+- [x] **Command Line Arguments**:
+  - [x] `--config <path>` - Custom config file
+  - [x] `--session <n>` - Start specific session
+  - [x] `--model <model>` - Override default LLM model
+  - [x] `--verbose` - Enable debug logging
+- [x] **Environment Setup**:
+  - [x] Automatic config file creation on first run
+  - [x] API key validation and setup wizard
+  - [x] Database initialization and migration
+  - [x] MCP server auto-start and health checking
 
 #### Error Handling & Robustness
 - [ ] **Graceful Error Recovery**:
