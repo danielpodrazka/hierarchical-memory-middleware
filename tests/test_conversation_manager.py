@@ -1256,41 +1256,43 @@ async def test_conversation_manager_logging(mock_config, caplog):
 
     caplog.set_level(logging.INFO)
 
-    manager = HierarchicalConversationManager(mock_config)
+    # Mock setup_logging to prevent it from interfering with caplog
+    with patch.object(mock_config, 'setup_logging'):
+        manager = HierarchicalConversationManager(mock_config)
 
-    assert "Initialized HierarchicalConversationManager" in caplog.text
+        assert "Initialized HierarchicalConversationManager" in caplog.text
 
-    conv_id = await manager.start_conversation()
-    assert f"Starting new conversation: {conv_id}" in caplog.text
+        conv_id = await manager.start_conversation()
+        assert f"Starting new conversation: {conv_id}" in caplog.text
 
-    mock_response = Mock()
-    mock_response.output = "Response"
-    # Create mock nodes to return
-    mock_user_node = Mock()
-    mock_user_node.node_id = 1
-    mock_ai_node = Mock()
-    mock_ai_node.node_id = 2
+        mock_response = Mock()
+        mock_response.output = "Response"
+        # Create mock nodes to return
+        mock_user_node = Mock()
+        mock_user_node.node_id = 1
+        mock_ai_node = Mock()
+        mock_ai_node.node_id = 2
 
-    with (
-        patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
-        patch.object(
-            manager.storage, "save_conversation_node", new_callable=AsyncMock
-        ) as mock_save,
-        patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
-    ):
-        mock_run.return_value = mock_response
-        mock_save.side_effect = [mock_user_node, mock_ai_node]
+        with (
+            patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run,
+            patch.object(
+                manager.storage, "save_conversation_node", new_callable=AsyncMock
+            ) as mock_save,
+            patch.object(manager, "_check_and_compress", new_callable=AsyncMock),
+        ):
+            mock_run.return_value = mock_response
+            mock_save.side_effect = [mock_user_node, mock_ai_node]
 
-        await manager.chat("Test message")
+            await manager.chat("Test message")
 
-        assert (
-            f"Processed conversation turn (user: 1, ai: 2) in conversation {conv_id}"
-            in caplog.text
-        )
+            assert (
+                f"Processed conversation turn (user: 1, ai: 2) in conversation {conv_id}"
+                in caplog.text
+            )
 
-    with patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run:
-        mock_run.side_effect = Exception("Test error")
+        with patch.object(manager.work_agent, "run", new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = Exception("Test error")
 
-        await manager.chat("Error message")
+            await manager.chat("Error message")
 
-        assert "Error in chat" in caplog.text
+            assert "Error in chat" in caplog.text
