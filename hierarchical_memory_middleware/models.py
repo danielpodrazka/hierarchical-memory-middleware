@@ -83,6 +83,7 @@ class ConversationState(BaseModel):
     """Overall state of a conversation with statistics."""
 
     conversation_id: str
+    name: Optional[str] = None  # Human-readable name for the conversation
     total_nodes: int
     compression_stats: Dict[CompressionLevel, int]
     current_goal: Optional[str] = None

@@ -74,6 +74,62 @@ def get_db_connection(
             logger.debug("DuckDB connection closed")
 
 
+def _run_migrations(conn: duckdb.DuckDBPyConnection) -> None:
+    """Run database migrations to update existing databases."""
+    logger.debug("Running database migrations...")
+
+    # Migration 1: Add name column to conversations table
+    try:
+        # Check if conversations table exists first
+        tables = conn.execute("SHOW TABLES").fetchall()
+        table_names = [table[0] for table in tables]
+        
+        if 'conversations' not in table_names:
+            logger.debug("Conversations table doesn't exist yet, skipping migration")
+            return
+        
+        # Try to select the name column to see if it exists
+        try:
+            conn.execute("SELECT name FROM conversations LIMIT 1").fetchall()
+            logger.debug("Name column already exists")
+        except Exception:
+            # Column doesn't exist, add it
+            logger.debug("Adding name column to conversations table...")
+            conn.execute("ALTER TABLE conversations ADD COLUMN name TEXT")
+            # Add unique constraint separately (some databases don't support it in ADD COLUMN)
+            try:
+                conn.execute("ALTER TABLE conversations ADD CONSTRAINT unique_name UNIQUE (name)")
+                logger.debug("Name column added with unique constraint")
+            except Exception:
+                # If unique constraint fails, just log it but continue
+                logger.debug("Name column added (unique constraint failed, continuing...)")
+        
+    except Exception as e:
+        logger.debug(f"Migration failed: {e}")
+        # This is expected for new databases where the table doesn't exist yet
+        pass
+
+    # Migration 2: Ensure unique constraint exists on name column
+    try:
+        # Check if conversations table exists and has the name column
+        tables = conn.execute("SHOW TABLES").fetchall()
+        table_names = [table[0] for table in tables]
+        
+        if 'conversations' in table_names:
+            try:
+                # Try to add unique constraint if it doesn't exist
+                conn.execute("ALTER TABLE conversations ADD CONSTRAINT unique_name UNIQUE (name)")
+                logger.debug("Unique constraint added to name column")
+            except Exception:
+                # Constraint might already exist, that's fine
+                logger.debug("Unique constraint already exists or couldn't be added")
+    except Exception as e:
+        logger.debug(f"Unique constraint migration failed: {e}")
+        pass
+
+    logger.debug("Database migrations completed")
+
+
 def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """Initialize database schema."""
     # Create nodes table with composite primary key
@@ -129,6 +185,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             id TEXT PRIMARY KEY,
+            name TEXT,
             total_nodes INTEGER DEFAULT 0,
             compression_stats JSON,
             current_goal TEXT,
@@ -138,4 +195,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
 
+    # Run migrations
+    _run_migrations(conn)
+    
     logger.debug("Database schema initialized")

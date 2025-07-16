@@ -426,6 +426,10 @@ class HierarchicalConversationManager:
 
         return self.conversation_id
 
+    async def set_conversation_name(self, conversation_id: str, name: str) -> bool:
+        """Set the name of a conversation."""
+        return await self.storage.set_conversation_name(conversation_id, name)
+
     def _extract_tool_calls(self, response) -> List[Dict[str, Any]]:
         """Return tool calls captured during execution."""
         # Return the tool calls that were captured during execution

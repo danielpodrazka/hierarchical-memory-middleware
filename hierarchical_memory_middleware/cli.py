@@ -88,6 +88,46 @@ async def resolve_conversation_id(partial_id: str, db_path: str) -> str:
         raise ValueError(f"Error resolving conversation ID: {e}")
 
 
+async def resolve_conversation_name(name: str, db_path: str) -> str:
+    """Resolve a conversation name to its full ID."""
+    try:
+        from .storage import DuckDBStorage
+
+        storage = DuckDBStorage(db_path)
+        conversations = await storage.get_conversation_list()
+
+        # Find conversations that match the name
+        matches = [conv for conv in conversations if conv.get('name') == name]
+
+        if len(matches) == 0:
+            raise ValueError(f"No conversation found with name '{name}'")
+        elif len(matches) == 1:
+            return matches[0]['id']
+        else:
+            # Multiple matches - should not happen due to unique constraints
+            raise ValueError(f"Multiple conversations found with name '{name}'")
+    except Exception as e:
+        raise ValueError(f"Error resolving conversation name: {e}")
+
+
+async def resolve_conversation_identifier(identifier: str, db_path: str) -> str:
+    """Resolve a conversation identifier (ID, partial ID, or name) to full ID."""
+    # First try as partial ID
+    try:
+        return await resolve_conversation_id(identifier, db_path)
+    except ValueError:
+        pass
+    
+    # Then try as name
+    try:
+        return await resolve_conversation_name(identifier, db_path)
+    except ValueError:
+        pass
+    
+    # If neither works, raise an error
+    raise ValueError(f"No conversation found with identifier '{identifier}'")
+
+
 async def save_conversation_to_json(manager, conversation_id: str, export_dir: str):
     """Save conversation to JSON files for real-time viewing."""
     try:
@@ -170,6 +210,9 @@ def chat(
     conversation_id: Optional[str] = typer.Option(
         None, "--conversation-id", "-c", help="Resume existing conversation"
     ),
+    name: Optional[str] = typer.Option(
+        None, "--name", "-n", help="Create or resume conversation by name"
+    ),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model to use"),
     db_path: Optional[str] = typer.Option(
         None, "--db-path", "-d", help="Database path"
@@ -189,13 +232,14 @@ def chat(
     """Start an interactive chat session with MCP memory tools."""
     asyncio.run(
         _chat_session(
-            conversation_id, model, db_path, recent_limit, mcp_port, export_dir
+            conversation_id, name, model, db_path, recent_limit, mcp_port, export_dir
         )
     )
 
 
 async def _chat_session(
     conversation_id: Optional[str],
+    name: Optional[str],
     model: Optional[str],
     db_path: Optional[str],
     recent_limit: Optional[int],
@@ -249,9 +293,40 @@ async def _chat_session(
         # Initialize conversation manager with MCP
         manager = HierarchicalConversationManager(config, mcp_server_url=mcp_server_url)
 
+        # Resolve conversation identifier
+        resolved_conversation_id = None
+        if conversation_id and name:
+            console.print("[red]❌ Cannot specify both --conversation-id and --name[/red]")
+            sys.exit(1)
+        elif conversation_id:
+            # Use conversation ID (supports partial matching)
+            try:
+                resolved_conversation_id = await resolve_conversation_id(conversation_id, config.db_path)
+                console.print(f"[dim]Resolved conversation ID: {resolved_conversation_id}[/dim]")
+            except ValueError as e:
+                console.print(f"[red]❌ {e}[/red]")
+                sys.exit(1)
+        elif name:
+            # Use conversation name
+            try:
+                resolved_conversation_id = await resolve_conversation_name(name, config.db_path)
+                console.print(f"[dim]Resolved conversation '{name}' to ID: {resolved_conversation_id}[/dim]")
+            except ValueError:
+                # Name not found, will create new conversation with this name
+                console.print(f"[yellow]Creating new conversation with name '{name}'[/yellow]")
+                resolved_conversation_id = None
+
         # Start or resume conversation
-        conv_id = await manager.start_conversation(conversation_id)
+        conv_id = await manager.start_conversation(resolved_conversation_id)
+        
+        # Set conversation name if specified and it's a new conversation
+        if name and resolved_conversation_id is None:
+            await manager.set_conversation_name(conv_id, name)
+            console.print(f"[green]✅ Named conversation '{name}' created[/green]")
+        
         console.print(f"[blue]🔗 Conversation ID: {conv_id}[/blue]")
+        if name:
+            console.print(f"[blue]📝 Conversation Name: {name}[/blue]")
         console.print()
 
         # Setup conversation JSON export paths
@@ -967,6 +1042,7 @@ async def _list_conversations(db_path: Optional[str]):
 
         table = Table(title="📋 Conversations", show_header=True)
         table.add_column("ID", style="cyan")
+        table.add_column("Name", style="white")
         table.add_column("Created", style="blue")
         table.add_column("Last Updated", style="green")
         table.add_column("Nodes", style="yellow")
@@ -975,6 +1051,7 @@ async def _list_conversations(db_path: Optional[str]):
         for conv in conversations:
             table.add_row(
                 conv["id"][:8] + "...",
+                conv.get("name", "<unnamed>"),
                 conv["created"][:16] if conv["created"] else "Unknown",
                 conv["last_updated"][:16] if conv["last_updated"] else "Unknown",
                 str(conv["node_count"]),
@@ -985,6 +1062,45 @@ async def _list_conversations(db_path: Optional[str]):
 
     except Exception as e:
         console.print(f"[red]❌ Error: {e}[/red]")
+
+
+@app.command()
+def switch_conversation(
+    identifier: str = typer.Argument(help="Conversation ID, partial ID, or name"),
+    db_path: Optional[str] = typer.Option(
+        None, "--db-path", "-d", help="Database path"
+    ),
+    mcp_port: Optional[int] = typer.Option(None, "--mcp-port", help="MCP server port"),
+):
+    """Switch to a conversation by ID, partial ID, or name and start chat session."""
+    asyncio.run(_switch_conversation(identifier, db_path, mcp_port))
+
+
+async def _switch_conversation(
+    identifier: str,
+    db_path: Optional[str],
+    mcp_port: Optional[int],
+):
+    """Switch conversation implementation."""
+    config = Config.from_env()
+    if db_path:
+        config.db_path = db_path
+    if mcp_port:
+        config.mcp_port = mcp_port
+
+    # Resolve conversation identifier
+    try:
+        conversation_id = await resolve_conversation_identifier(identifier, config.db_path)
+        console.print(f"[green]✅ Switching to conversation: {conversation_id}[/green]")
+        
+        # Start chat session with resolved conversation
+        await _chat_session(conversation_id, None, None, config.db_path, None, mcp_port, ".conversations")
+    except ValueError as e:
+        console.print(f"[red]❌ {e}[/red]")
+        
+        # Show available conversations
+        console.print("\n[yellow]Available conversations:[/yellow]")
+        await _list_conversations(config.db_path)
 
 
 @app.command()

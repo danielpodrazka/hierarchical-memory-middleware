@@ -419,28 +419,48 @@ class DuckDBStorage:
         with self._get_connection() as conn:
             result = conn.execute(
                 """
-                SELECT 
-                    id, 
-                    total_nodes, 
-                    created_at, 
+                SELECT
+                    id,
+                    name,
+                    total_nodes,
+                    created_at,
                     last_updated,
                     CASE WHEN total_nodes > 0 THEN 1 ELSE 0 END as is_active
                 FROM conversations
                 ORDER BY last_updated DESC
                 """
             ).fetchall()
-            
+
             conversations = []
             for row in result:
                 conversations.append({
                     "id": row[0],
-                    "node_count": row[1],
-                    "created": row[2].isoformat() if row[2] else None,
-                    "last_updated": row[3].isoformat() if row[3] else None,
-                    "is_active": bool(row[4])
+                    "name": row[1],
+                    "node_count": row[2],
+                    "created": row[3].isoformat() if row[3] else None,
+                    "last_updated": row[4].isoformat() if row[4] else None,
+                    "is_active": bool(row[5])
                 })
             
             return conversations
+
+    async def set_conversation_name(self, conversation_id: str, name: str) -> bool:
+        """Set the name of a conversation."""
+        with self._get_connection() as conn:
+            try:
+                result = conn.execute(
+                    """
+                    UPDATE conversations
+                    SET name = ?
+                    WHERE id = ?
+                    RETURNING id
+                    """,
+                    (name, conversation_id),
+                ).fetchone()
+                return result is not None
+            except Exception:
+                # Handle unique constraint violation
+                return False
 
     async def get_conversation_stats(
         self, conversation_id: str
