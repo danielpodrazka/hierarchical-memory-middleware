@@ -113,14 +113,21 @@ sequenceDiagram
 
     Middleware->>LLM: Send optimized context + user message
 
-    Note over LLM: Realizes it needs more detail<br/>about older conversation
+    Note over LLM: Needs to search for<br/>"token refresh strategy"
+
+    LLM->>MCP: find("token refresh", limit=3)
+    MCP->>Storage: Search conversation history
+    Storage-->>MCP: Found 3 relevant nodes
+    MCP-->>LLM: Search results with node summaries
+
+    Note over LLM: Decides to expand node 6<br/>for full details
 
     LLM->>MCP: expand_node(6)
     MCP->>Storage: Get full node 6 content
-    Storage-->>MCP: Full 45-line token refresh explanation
-    MCP-->>LLM: Complete node 6 details
+    Storage-->>MCP: Complete token refresh implementation
+    MCP-->>LLM: Full 45-line explanation
 
-    LLM-->>Middleware: "Based on node 6, here's our strategy..."
+    LLM-->>Middleware: "Based on our previous discussion in node 6..."
 
     Note over Middleware,Storage: Store new conversation
     Middleware->>Storage: Save user node
@@ -138,29 +145,30 @@ This flowchart shows how conversation nodes move through compression levels:
 
 ```mermaid
 flowchart TD
-    Start([New Conversation Node]) --> Recent{Recent?<br/>< 10 nodes}
+    Start([New Conversation Node]) --> Full["🟢 FULL LEVEL<br/>Complete content<br/>All details preserved"]
 
-    Recent -->|Yes| Full["🟢 FULL LEVEL<br/>Complete content<br/>All details preserved"]
-    Recent -->|No| CheckAge{Age?<br/>< 50 nodes}
+    Full --> CheckFull{"FULL nodes > 10?"}    
+    CheckFull -->|No| KeepFull["Keep as FULL"]
+    CheckFull -->|Yes| CompressFull["Compress oldest FULL → SUMMARY"]
 
-    CheckAge -->|Yes| Summary["🟡 SUMMARY LEVEL<br/>1-2 sentence summary<br/>+ line count<br/>Key topics preserved"]
-    CheckAge -->|No| CheckOlder{Age?<br/>< 200 nodes}
+    CompressFull --> Summary["🟡 SUMMARY LEVEL<br/>TF-IDF summarization<br/>Key topics extracted<br/>Line count preserved"]
 
-    CheckOlder -->|Yes| Meta["🟠 META LEVEL<br/>Group summaries<br/>20-40 nodes per group<br/>High-level themes"]
-    CheckOlder -->|No| Archive["🔴 ARCHIVE LEVEL<br/>Very compressed<br/>Major decisions only<br/>Long-term context"]
+    Summary --> CheckSummary{"SUMMARY nodes > 50?"}    
+    CheckSummary -->|No| KeepSummary["Keep as SUMMARY"]
+    CheckSummary -->|Yes| GroupSummary["Group oldest SUMMARY → META<br/>(20-40 nodes per group)"]
 
-    Full --> Trigger1{"Conversation<br/>grows?"}
-    Summary --> Trigger2{"Conversation<br/>grows?"}
-    Meta --> Trigger3{"Conversation<br/>grows?"}
+    GroupSummary --> Meta["🟠 META LEVEL<br/>Group summaries<br/>High-level themes<br/>Timestamp ranges"]
 
-    Trigger1 -->|Yes| Summary
-    Trigger2 -->|Yes| Meta
-    Trigger3 -->|Yes| Archive
+    Meta --> CheckMeta{"META nodes > 200?"}    
+    CheckMeta -->|No| KeepMeta["Keep as META"]
+    CheckMeta -->|Yes| CompressMeta["Compress oldest META → ARCHIVE"]
 
-    Full --> MCP1["🔍 expand_node()<br/>Returns full content"]
-    Summary --> MCP2["🔍 expand_node()<br/>Returns full content"]
-    Meta --> MCP3["🔍 expand_node()<br/>Returns group details"]
-    Archive --> MCP4["🔍 expand_node()<br/>Returns archived content"]
+    CompressMeta --> Archive["🔴 ARCHIVE LEVEL<br/>Highly compressed<br/>Major decisions only<br/>Long-term context"]
+
+    KeepFull --> MCPFull["🔍 MCP Tools:<br/>expand_node() • find()"]
+    KeepSummary --> MCPSummary["🔍 MCP Tools:<br/>expand_node() • find()"]
+    KeepMeta --> MCPMeta["🔍 MCP Tools:<br/>expand_node() • find()"]
+    Archive --> MCPArchive["🔍 MCP Tools:<br/>expand_node() • find()"]
 ```
 
 ### System Components
