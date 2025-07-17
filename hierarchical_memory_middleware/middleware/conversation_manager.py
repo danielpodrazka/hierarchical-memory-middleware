@@ -94,7 +94,7 @@ class HierarchicalConversationManager:
             model_instance = ModelManager.create_model(config.work_model)
             logger.info(f"Successfully created model instance for: {config.work_model}")
         except Exception as e:
-            logger.error(f"Failed to create model {config.work_model}: {str(e)}")
+            logger.exception(f"Failed to create model {config.work_model}: {str(e)}")
             raise ValueError(
                 f"Unable to initialize model '{config.work_model}': {str(e)}"
             )
@@ -161,7 +161,7 @@ class HierarchicalConversationManager:
             return result
 
         except Exception as e:
-            logger.error(f"❌ TOOL CALL FAILED: {tool_name} - {str(e)}")
+            logger.exception(f"❌ TOOL CALL FAILED: {tool_name} - {str(e)}")
             raise
 
     def _reconstruct_ai_message_from_node(
@@ -350,7 +350,11 @@ class HierarchicalConversationManager:
                         for part in msg.parts:
                             if hasattr(part, "content"):
                                 # Ensure content is converted to string
-                                content_str = str(part.content) if part.content is not None else ""
+                                content_str = (
+                                    str(part.content)
+                                    if part.content is not None
+                                    else ""
+                                )
                                 content_parts.append(content_str)
                             elif hasattr(part, "tool_name"):
                                 content_parts.append(f"[Tool call: {part.tool_name}]")
@@ -387,7 +391,11 @@ class HierarchicalConversationManager:
                         for part in msg.parts:
                             if hasattr(part, "content"):
                                 # Ensure content is converted to string
-                                content_str = str(part.content) if part.content is not None else ""
+                                content_str = (
+                                    str(part.content)
+                                    if part.content is not None
+                                    else ""
+                                )
                                 content_parts.append(content_str)
                             elif hasattr(part, "tool_name"):
                                 content_parts.append(f"[Tool call: {part.tool_name}]")
@@ -407,7 +415,7 @@ class HierarchicalConversationManager:
                 return messages
 
         except Exception as e:
-            logger.error(f"Error in history processor: {str(e)}", exc_info=True)
+            logger.exception(f"Error in history processor: {str(e)}", exc_info=True)
             # Fallback to provided messages on error to preserve tool flows
             return messages
 
@@ -508,7 +516,9 @@ class HierarchicalConversationManager:
             full_response_text = ""
             usage_info = None
 
-            logger.info("Starting chat_stream with MCP tools (essential to architecture)")
+            logger.info(
+                "Starting chat_stream with MCP tools (essential to architecture)"
+            )
 
             # Use proper pydantic-ai streaming with graph iteration
             # MCP tools are essential to the architecture, always use them
@@ -522,10 +532,14 @@ class HierarchicalConversationManager:
 
                     async for node in run:
                         if self.work_agent.is_user_prompt_node(node):
-                            logger.info(f"UserPromptNode: {getattr(node, 'user_prompt', str(node))}")
+                            logger.info(
+                                f"UserPromptNode: {getattr(node, 'user_prompt', str(node))}"
+                            )
 
                         elif self.work_agent.is_model_request_node(node):
-                            logger.info("ModelRequestNode: streaming partial request tokens")
+                            logger.info(
+                                "ModelRequestNode: streaming partial request tokens"
+                            )
                             async with node.stream(run.ctx) as request_stream:
                                 async for event in request_stream:
                                     # Handle different event types for streaming
@@ -587,12 +601,11 @@ class HierarchicalConversationManager:
                 },
             )
 
-
             await self._check_and_compress()
             logger.info("chat_stream completed successfully")
 
         except Exception as e:
-            logger.error(f"Error in chat_stream: {e}", exc_info=True)
+            logger.exception(f"Error in chat_stream: {e}", exc_info=True)
             raise
 
     async def chat(self, user_message: str) -> str:
@@ -659,7 +672,7 @@ class HierarchicalConversationManager:
             return response.output
 
         except Exception as e:
-            logger.error(f"Error in chat: {str(e)}", exc_info=True)
+            logger.exception(f"Error in chat: {str(e)}", exc_info=True)
             return f"I apologize, but I encountered an error processing your message: {str(e)}"
 
     async def get_conversation_summary(self) -> Dict[str, Any]:
@@ -687,7 +700,9 @@ class HierarchicalConversationManager:
             }
 
         except Exception as e:
-            logger.error(f"Error getting conversation summary: {str(e)}", exc_info=True)
+            logger.exception(
+                f"Error getting conversation summary: {str(e)}", exc_info=True
+            )
             return {"error": str(e)}
 
     async def find(
@@ -721,7 +736,7 @@ class HierarchicalConversationManager:
             ]
 
         except Exception as e:
-            logger.error(f"Error searching memory: {str(e)}", exc_info=True)
+            logger.exception(f"Error searching memory: {str(e)}", exc_info=True)
             return []
 
     async def _check_and_compress(self) -> None:
@@ -763,7 +778,7 @@ class HierarchicalConversationManager:
                 logger.debug("No hierarchy compression needed at this time")
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 f"Error during advanced hierarchy compression: {str(e)}", exc_info=True
             )
 
@@ -800,7 +815,7 @@ class HierarchicalConversationManager:
                     )
 
             except Exception as fallback_error:
-                logger.error(
+                logger.exception(
                     f"Fallback compression also failed: {str(fallback_error)}",
                     exc_info=True,
                 )
@@ -830,42 +845,55 @@ class HierarchicalConversationManager:
             }
 
         except Exception as e:
-            logger.error(f"Error getting node details: {str(e)}", exc_info=True)
+            logger.exception(f"Error getting node details: {str(e)}", exc_info=True)
             return None
 
     def _extract_streamable_content(self, event) -> str:
         """Extract streamable content from pydantic-ai events."""
         # Content we care about streaming
-        if isinstance(event, PartStartEvent) and hasattr(event.part, 'content'):
+        if isinstance(event, PartStartEvent) and hasattr(event.part, "content"):
             return event.part.content
-        elif isinstance(event, PartDeltaEvent) and hasattr(event, 'delta') and isinstance(event.delta, TextPartDelta):
+        elif (
+            isinstance(event, PartDeltaEvent)
+            and hasattr(event, "delta")
+            and isinstance(event.delta, TextPartDelta)
+        ):
             return event.delta.content_delta
-        
+
         return ""
 
     def _track_tool_events(self, event):
         """Track tool calls and results for memory storage."""
         if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
             # Track tool call
-            self._current_tool_calls.append({
-                "tool_name": event.part.tool_name,
-                "tool_call_id": getattr(event.part, 'tool_call_id', f"tool_call_{len(self._current_tool_calls)}"),
-                "args": getattr(event.part, 'args', {}),
-            })
+            self._current_tool_calls.append(
+                {
+                    "tool_name": event.part.tool_name,
+                    "tool_call_id": getattr(
+                        event.part,
+                        "tool_call_id",
+                        f"tool_call_{len(self._current_tool_calls)}",
+                    ),
+                    "args": getattr(event.part, "args", {}),
+                }
+            )
             logger.info(f"Tracked tool call: {event.part.tool_name}")
 
         elif isinstance(event, FunctionToolCallEvent):
             # Log tool call event - check what attributes are available
-            logger.info(f"Tool call event: {type(event).__name__} - {getattr(event, 'tool_call_id', 'no_id')}")
+            logger.info(
+                f"Tool call event: {type(event).__name__} - {getattr(event, 'tool_call_id', 'no_id')}"
+            )
 
         elif isinstance(event, FunctionToolResultEvent):
             # Track tool result - use available attributes defensively
-            tool_call_id = getattr(event, 'tool_call_id', 'unknown')
-            result_str = str(getattr(event, 'result', 'no_result'))
-            self._current_tool_results.append({
-                "tool_name": "unknown",  # FunctionToolResultEvent might not have tool_name
-                "tool_call_id": tool_call_id,
-                "result": result_str,
-            })
+            tool_call_id = getattr(event, "tool_call_id", "unknown")
+            result_str = str(getattr(event, "result", "no_result"))
+            self._current_tool_results.append(
+                {
+                    "tool_name": "unknown",  # FunctionToolResultEvent might not have tool_name
+                    "tool_call_id": tool_call_id,
+                    "result": result_str,
+                }
+            )
             logger.info(f"Tracked tool result: {tool_call_id}")
-
