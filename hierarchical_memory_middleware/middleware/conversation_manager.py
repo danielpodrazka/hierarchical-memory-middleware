@@ -6,7 +6,7 @@ import uuid
 import logging
 from typing import Optional, List, Dict, Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, usage
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -938,7 +938,8 @@ class HierarchicalConversationManager:
                 logger.debug("MCP context manager entered, starting graph iteration")
 
                 # Use agent.iter() for proper streaming with tool calls
-                async with self.work_agent.iter(user_message) as run:
+                custom_limits = usage.UsageLimits(request_limit=self.config.request_limit)
+                async with self.work_agent.iter(user_message, usage_limits=custom_limits) as run:
                     content_streamed = False
 
                     async for node in run:
@@ -1037,7 +1038,8 @@ class HierarchicalConversationManager:
             # The history processor will automatically manage conversation memory
             # MCP tools are essential to the architecture, always use them
             async with self.work_agent.run_mcp_servers():
-                response = await self.work_agent.run(user_prompt=user_message)
+                custom_limits = usage.UsageLimits(request_limit=self.config.request_limit)
+                response = await self.work_agent.run(user_prompt=user_message, usage_limits=custom_limits)
 
             # Save the user message as a node
             user_node = await self.storage.save_conversation_node(

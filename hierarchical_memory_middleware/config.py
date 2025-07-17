@@ -29,6 +29,7 @@ class Config:
     work_model: str = "claude-sonnet-4"
     summary_model: str = "claude-sonnet-4"
     embedding_model: str = "text-embedding-3-small"
+    request_limit: int = 500
 
     # Hierarchy configuration
     recent_node_limit: int = 10
@@ -89,6 +90,7 @@ class Config:
             work_model=os.getenv("WORK_MODEL", "claude-sonnet-4"),
             summary_model=os.getenv("SUMMARY_MODEL", "claude-sonnet-4"),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+            request_limit=get_env_int("REQUEST_LIMIT", 500),
             # Hierarchy configuration
             recent_node_limit=get_env_int("RECENT_NODE_LIMIT", 10),
             summary_threshold=get_env_int("SUMMARY_THRESHOLD", 20),
