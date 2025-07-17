@@ -41,6 +41,7 @@ class HierarchicalConversationManager:
         config: Config,
         storage: Optional[DuckDBStorage] = None,
         mcp_server_url: Optional[str] = None,
+        external_mcp_servers: Optional[List[MCPServerStreamableHTTP]] = None,
     ):
         """Initialize the conversation manager."""
         self.config = config
@@ -76,17 +77,21 @@ class HierarchicalConversationManager:
         # Initialize PydanticAI agent with optional MCP server integration
         system_prompt = """You are a helpful AI assistant. You provide accurate and helpful responses."""
 
-        # Create MCP server client if URL provided
+        # Build MCP server list
         mcp_servers = []
+
+        # Add memory server if provided
         if mcp_server_url:
-            mcp_server = MCPServerStreamableHTTP(
+            memory_server = MCPServerStreamableHTTP(
                 url=mcp_server_url,
-                tool_prefix="memory",  # Prefix tools with 'memory_'
-                process_tool_call=self._log_tool_call
-                if config.log_tool_calls
-                else None,
+                tool_prefix="memory",
+                process_tool_call=self._log_tool_call if config.log_tool_calls else None,
             )
-            mcp_servers.append(mcp_server)
+            mcp_servers.append(memory_server)
+
+        # Add external servers
+        if external_mcp_servers:
+            mcp_servers.extend(external_mcp_servers)
 
         # Create agent with model manager
         try:

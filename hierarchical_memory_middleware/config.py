@@ -1,10 +1,24 @@
 """Configuration settings for hierarchical memory middleware."""
 
+import json
 import os
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from pydantic import BaseModel
 
 from dotenv import load_dotenv
+
+
+class ExternalMCPServer(BaseModel):
+    """Configuration for an external MCP server."""
+    command: str
+    args: List[str]
+    env: Dict[str, str] = {}
+    port: int
+    tool_prefix: str = ""
+    enabled: bool = True
 
 
 @dataclass
@@ -110,6 +124,22 @@ class Config:
             return cls.from_env(env_file)
         return cls()
 
+    @classmethod
+    def load_external_mcp_servers(cls) -> Dict[str, ExternalMCPServer]:
+        """Load external MCP server configurations."""
+        config_path = Path.home() / ".config" / "hierarchical_memory_middleware" / "mcp_servers.json"
+
+        if not config_path.exists():
+            return {}
+
+        with open(config_path) as f:
+            data = json.load(f)
+
+        servers = {}
+        for name, config in data.items():
+            servers[name] = ExternalMCPServer(**config)
+
+        return servers
     def setup_logging(self) -> None:
         """Set up logging configuration based on config settings."""
         import logging

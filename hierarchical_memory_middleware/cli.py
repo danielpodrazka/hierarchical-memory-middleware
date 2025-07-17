@@ -20,6 +20,7 @@ from rich.status import Status
 from .config import Config
 from .middleware.conversation_manager import HierarchicalConversationManager
 from .models import CompressionLevel, NodeType
+from .mcp_manager import SimpleMCPManager
 
 # Logging will be configured by the CLI callback (setup_cli_logging)
 logger = logging.getLogger(__name__)
@@ -307,9 +308,23 @@ async def _chat_session(
     # Setup conversation export directory
     os.makedirs(export_dir, exist_ok=True)
 
+    # Load and start external MCP servers
+    external_servers = config.load_external_mcp_servers()
+    mcp_manager = SimpleMCPManager()
+    external_clients = []
+
+    for server_name, server_config in external_servers.items():
+        client = await mcp_manager.start_server(server_name, server_config)
+        if client:
+            external_clients.append(client)
+
     try:
-        # Initialize conversation manager with MCP
-        manager = HierarchicalConversationManager(config, mcp_server_url=mcp_server_url)
+        # Initialize conversation manager with all servers
+        manager = HierarchicalConversationManager(
+            config,
+            mcp_server_url=mcp_server_url,  # memory server
+            external_mcp_servers=external_clients  # external servers
+        )
 
         # Resolve conversation identifier
         resolved_conversation_id = None
@@ -462,6 +477,9 @@ async def _chat_session(
         console.print(f"[red]❌ Failed to initialize: {str(e)}[/red]")
         logger.exception("Initialization error")
         sys.exit(1)
+    finally:
+        # Clean up external servers
+        mcp_manager.stop_all()
 
     console.print("[blue]👋 Goodbye![/blue]")
 
