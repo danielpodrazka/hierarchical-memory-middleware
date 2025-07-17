@@ -91,7 +91,10 @@ class HierarchicalConversationManager:
 
         # Add external servers
         if external_mcp_servers:
-            mcp_servers.extend(external_mcp_servers)
+            for server in external_mcp_servers:
+                # Set log_tool_call attribute on each external server
+                server.process_tool_call = self._log_tool_call if config.log_tool_calls else None
+                mcp_servers.append(server)
 
         # Create agent with model manager
         try:
