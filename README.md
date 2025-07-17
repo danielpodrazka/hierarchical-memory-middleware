@@ -47,7 +47,7 @@ xychart-beta
 
 3. **Hierarchical Compression System** (`AdvancedCompressionManager`)
    - 4-level compression: FULL → SUMMARY → META → ARCHIVE
-   - TF-IDF-based intelligent summarization
+   - Content truncation with TF-IDF topic extraction
    - Configurable thresholds for compression triggers
 
 4. **MCP Memory Server** (`MemoryMCPServer`)
@@ -69,7 +69,7 @@ xychart-beta
 └─ Last 10 nodes (configurable)
 
 🟡 SUMMARY LEVEL (Older)
-├─ 1-2 sentence summaries
+├─ Content truncation (first sentence/50 words)
 ├─ Key topics extracted via TF-IDF
 ├─ Line count metadata
 └─ Expandable via MCP tools
@@ -151,7 +151,7 @@ flowchart TD
     CheckFull -->|No| KeepFull["Keep as FULL"]
     CheckFull -->|Yes| CompressFull["Compress oldest FULL → SUMMARY"]
 
-    CompressFull --> Summary["🟡 SUMMARY LEVEL<br/>TF-IDF summarization<br/>Key topics extracted<br/>Line count preserved"]
+    CompressFull --> Summary["🟡 SUMMARY LEVEL<br/>Content truncation<br/>TF-IDF topic extraction<br/>Metadata preservation"]
 
     Summary --> CheckSummary{"SUMMARY nodes > 50?"}    
     CheckSummary -->|No| KeepSummary["Keep as SUMMARY"]
@@ -183,12 +183,11 @@ graph TB
 
     subgraph "Hierarchical Memory Middleware"
         CM["🧠 Conversation Manager<br/>• Context optimization<br/>• Compression triggers<br/>• Response orchestration"]
-        HB["📊 Hierarchy Builder<br/>• Smart summarization<br/>• Importance scoring<br/>• Level management"]
+        HB["📊 Hierarchy Builder<br/>• Content truncation<br/>• Topic extraction<br/>• Level management"]
     end
 
     subgraph "AI Agents (PydanticAI)"
         Work["🤖 Work Agent<br/>(i.e. Claude Sonnet)<br/>Main conversations"]
-        Sum["📝 Summary Agent<br/>Compression tasks"]
     end
 
     subgraph "Storage Layer"
@@ -204,9 +203,8 @@ graph TB
     CM -->|"Generate response"| Work
     Work <-->|"MCP calls during response"| MCP
     MCP <--> DB
-    CM -->|"Compress old nodes"| Sum
-    Sum --> HB
-    HB --> DB
+    CM -->|"Trigger compression"| HB
+    HB -->|"Store compressed nodes"| DB
     CM -.->|"Response"| User
 ```
 
@@ -488,7 +486,7 @@ uv run hmm --help
 
 1. **New Messages**: Stored as FULL nodes with complete content
 2. **Threshold Trigger**: When FULL nodes exceed limit (default: 10)
-3. **SUMMARY Compression**: Older FULL nodes → 1-2 sentence summaries
+3. **SUMMARY Compression**: Older FULL nodes → content truncation + metadata
 4. **META Grouping**: When SUMMARY nodes exceed limit (default: 50)
 5. **ARCHIVE Compression**: When META groups exceed limit (default: 200)
 
