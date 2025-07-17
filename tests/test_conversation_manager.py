@@ -6,7 +6,7 @@ from datetime import datetime
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import List, Dict, Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, usage
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
 
 from hierarchical_memory_middleware.config import Config
@@ -15,7 +15,6 @@ from hierarchical_memory_middleware.middleware.conversation_manager import (
 )
 from hierarchical_memory_middleware.models import (
     ConversationNode,
-    ConversationState,
     CompressionLevel,
     NodeType,
     CompressionResult,
@@ -24,7 +23,6 @@ from hierarchical_memory_middleware.models import (
 from hierarchical_memory_middleware.storage import DuckDBStorage
 from hierarchical_memory_middleware.compression import (
     SimpleCompressor,
-    CompressionManager,
 )
 from hierarchical_memory_middleware.advanced_hierarchy import (
     AdvancedCompressionManager,
@@ -260,7 +258,10 @@ async def test_chat_successful_response(mock_config):
 
             assert response == "Hello! I'm doing well, thank you!"
 
-            mock_run.assert_called_once_with(user_prompt="Hello, how are you?")
+            mock_run.assert_called_once_with(
+                user_prompt="Hello, how are you?",
+                usage_limits=usage.UsageLimits(request_limit=500),
+            )
 
             # Should be called twice: once for user node, once for AI node
             assert mock_save.call_count == 2
