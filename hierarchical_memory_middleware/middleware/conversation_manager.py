@@ -1,5 +1,6 @@
 """Main conversation manager for hierarchical memory system."""
 
+import asyncio
 import json
 import uuid
 import logging
@@ -343,7 +344,9 @@ class HierarchicalConversationManager:
                         content_parts = []
                         for part in msg.parts:
                             if hasattr(part, "content"):
-                                content_parts.append(part.content)
+                                # Ensure content is converted to string
+                                content_str = str(part.content) if part.content is not None else ""
+                                content_parts.append(content_str)
                             elif hasattr(part, "tool_name"):
                                 content_parts.append(f"[Tool call: {part.tool_name}]")
                         content = " ".join(content_parts) if content_parts else str(msg)
@@ -378,7 +381,9 @@ class HierarchicalConversationManager:
                         content_parts = []
                         for part in msg.parts:
                             if hasattr(part, "content"):
-                                content_parts.append(part.content)
+                                # Ensure content is converted to string
+                                content_str = str(part.content) if part.content is not None else ""
+                                content_parts.append(content_str)
                             elif hasattr(part, "tool_name"):
                                 content_parts.append(f"[Tool call: {part.tool_name}]")
                         content = " ".join(content_parts) if content_parts else str(msg)
@@ -486,7 +491,7 @@ class HierarchicalConversationManager:
         return "\n".join(content_parts)
 
     async def chat_stream(self, user_message: str):
-        """Streaming version of chat with hierarchical memory integration."""
+        """Streaming version of chat with hierarchical memory integration and proper tool handling."""
         if not self.conversation_id:
             raise ValueError("No active conversation. Call start_conversation() first.")
 
@@ -497,8 +502,7 @@ class HierarchicalConversationManager:
 
             full_response_text = ""
             final_response = None
-            stream_result = None
-
+            
             # Simple response-like object for compatibility with existing code
             class MockResponse:
                 def __init__(self, output_text):
@@ -507,29 +511,120 @@ class HierarchicalConversationManager:
                 def usage(self):
                     return self._usage
 
-            # Generate AI response using PydanticAI streaming
+            # Multi-phase streaming with proper tool handling
             logger.info(f"Starting chat_stream with has_mcp_tools={self.has_mcp_tools}")
+            
+            # Phase 1: Initial streaming
             if self.has_mcp_tools:
                 logger.info("Entering MCP context manager")
                 async with self.work_agent.run_mcp_servers():
-                    logger.info("MCP context manager entered, starting run_stream")
-                    async with self.work_agent.run_stream(user_prompt=user_message) as stream_result:
-                        logger.info("Streaming started")
-                        # Stream text as it comes
-                        async for chunk in stream_result.stream_text(delta=True):
-                            if chunk:
-                                logger.info(f"Yielding chunk: '{chunk}'")
-                                full_response_text += chunk
-                                yield chunk
-                        final_response = MockResponse(full_response_text)
+                    logger.info("MCP context manager entered, starting multi-phase streaming")
+                    
+                    # Keep streaming until no more tool calls are needed
+                    message_history = None
+                    phase = 1
+                    
+                    while True:
+                        logger.info(f"Starting streaming phase {phase}")
+                        
+                        # Create the streaming request
+                        if phase == 1:
+                            # First phase: use the user prompt
+                            stream_kwargs = {"user_prompt": user_message}
+                        else:
+                            # Subsequent phases: use message history that includes tool results
+                            stream_kwargs = {"message_history": message_history}
+
+                        logger.info(f"About to call run_stream with kwargs: {stream_kwargs}")
+                        async with self.work_agent.run_stream(**stream_kwargs) as stream_result:
+                            logger.info(f"Streaming phase {phase} started with stream_result: {stream_result}")
+
+                            # Stream text as it comes
+                            phase_text = ""
+                            logger.info(f"About to start streaming loop with stream_result: {stream_result}")
+                            async for chunk in stream_result.stream_text(delta=True):
+                                logger.info(f"Received chunk from stream: '{chunk}'")
+                                if chunk:
+                                    logger.info(f"Yielding chunk: '{chunk}'")
+                                    phase_text += chunk
+                                    full_response_text += chunk
+                                    yield chunk
+                            
+                            logger.info(f"Streaming loop completed, phase_text: '{phase_text}'")
+
+                            logger.info(f"Streaming phase {phase} completed, got text: '{phase_text}'")
+                            
+                            # Get the complete response to check for tool calls
+                            try:
+                                # Note: We need to get the complete response to check for tool calls
+                                # This will consume the stream, but we've already yielded the text
+                                complete_response = await stream_result.get_output()
+                                logger.info(f"Got complete response for phase {phase}")
+                                
+                                # Check if there are any tool calls in the response
+                                # We need to examine the message history to see if tools were called
+                                current_messages = stream_result.all_messages()
+                                
+                                # Look for tool calls in the latest messages
+                                tool_calls_found = False
+                                for msg in current_messages:
+                                    if hasattr(msg, 'parts'):
+                                        for part in msg.parts:
+                                            if hasattr(part, 'tool_name') and part.tool_name:
+                                                tool_calls_found = True
+                                                logger.info(f"Found tool call: {part.tool_name}")
+                                                
+                                                # Track the tool call
+                                                self._current_tool_calls.append({
+                                                    "tool_name": part.tool_name,
+                                                    "tool_call_id": getattr(part, 'tool_call_id', f"tool_call_{len(self._current_tool_calls)}"),
+                                                    "args": getattr(part, 'args', {}),
+                                                })
+                                                
+                                if not tool_calls_found:
+                                    # No more tool calls, we're done
+                                    logger.info("No tool calls found, streaming complete")
+                                    final_response = MockResponse(full_response_text)
+                                    break
+                                else:
+                                    # Tool calls found, prepare for next phase
+                                    logger.info("Tool calls found, preparing for next phase")
+                                    message_history = current_messages
+                                    phase += 1
+                                    
+                                    # Add a small delay to ensure tools are processed
+                                    await asyncio.sleep(0.01)
+                                    
+                            except Exception as e:
+                                logger.error(f"Error getting complete response in phase {phase}: {e}", exc_info=True)
+                                # If we can't get the complete response, assume no more tool calls
+                                final_response = MockResponse(full_response_text)
+                                break
+                            
+                            # Safety check to prevent infinite loops
+                            if phase > 10:
+                                logger.warning("Too many streaming phases, breaking")
+                                final_response = MockResponse(full_response_text)
+                                break
+                            
             else:
+                # No MCP tools, simpler streaming
                 async with self.work_agent.run_stream(user_prompt=user_message) as stream_result:
-                    # Stream text as it comes
                     async for chunk in stream_result.stream_text(delta=True):
                         if chunk:
                             full_response_text += chunk
                             yield chunk
-                    final_response = MockResponse(full_response_text)
+                    
+                    try:
+                        complete_response = await stream_result.get_output()
+                        final_response = MockResponse(full_response_text)
+                    except Exception as e:
+                        logger.debug(f"Could not get complete response: {e}")
+                        final_response = MockResponse(full_response_text)
+
+            # Ensure final_response is properly initialized
+            if final_response is None:
+                final_response = MockResponse(full_response_text)
 
             # Save nodes after streaming is complete
             user_node = await self.storage.save_conversation_node(
@@ -565,7 +660,7 @@ class HierarchicalConversationManager:
                 content=comprehensive_content,
                 tokens_used=tokens_used,
                 ai_components={
-                    "assistant_text": full_response_text,  # This now includes ALL text
+                    "assistant_text": full_response_text,  # Now contains ALL streamed text
                     "model_used": self.config.work_model,
                     "tool_calls": self._extract_tool_calls(final_response),
                     "tool_results": self._extract_tool_results(final_response),
@@ -573,7 +668,7 @@ class HierarchicalConversationManager:
             )
 
             await self._check_and_compress()
-            # Streaming complete
+            logger.info("Multi-phase streaming completed successfully")
 
         except Exception as e:
             logger.error(f"Error in streaming chat: {str(e)}", exc_info=True)
