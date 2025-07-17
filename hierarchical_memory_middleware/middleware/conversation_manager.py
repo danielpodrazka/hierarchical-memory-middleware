@@ -119,8 +119,7 @@ class HierarchicalConversationManager:
         self._last_ai_view_data = None
 
         logger.info(
-            f"Initialized HierarchicalConversationManager with model: {config.work_model}"
-            + (" and MCP tools" if self.has_mcp_tools else "")
+            f"Initialized HierarchicalConversationManager with model: {config.work_model} and MCP tools"
         )
 
     async def _log_tool_call(
@@ -509,61 +508,18 @@ class HierarchicalConversationManager:
             full_response_text = ""
             usage_info = None
 
-            logger.info(f"Starting chat_stream with has_mcp_tools={self.has_mcp_tools}")
+            logger.info("Starting chat_stream with MCP tools (essential to architecture)")
 
             # Use proper pydantic-ai streaming with graph iteration
-            if self.has_mcp_tools:
-                logger.info("Entering MCP context manager")
-                async with self.work_agent.run_mcp_servers():
-                    logger.info("MCP context manager entered, starting graph iteration")
-                    
-                    # Use agent.iter() for proper streaming with tool calls
-                    async with self.work_agent.iter(user_message) as run:
-                        content_streamed = False
-                        
-                        async for node in run:
-                            if self.work_agent.is_user_prompt_node(node):
-                                logger.info(f"UserPromptNode: {getattr(node, 'user_prompt', str(node))}")
+            # MCP tools are essential to the architecture, always use them
+            logger.info("Entering MCP context manager")
+            async with self.work_agent.run_mcp_servers():
+                logger.info("MCP context manager entered, starting graph iteration")
 
-                            elif self.work_agent.is_model_request_node(node):
-                                logger.info("ModelRequestNode: streaming partial request tokens")
-                                async with node.stream(run.ctx) as request_stream:
-                                    async for event in request_stream:
-                                        # Handle different event types for streaming
-                                        content = self._extract_streamable_content(event)
-                                        if content:
-                                            content_streamed = True
-                                            full_response_text += content
-                                            yield content
-                                            
-                            elif self.work_agent.is_call_tools_node(node):
-                                logger.info("ToolCallNode: processing tool calls")
-                                async with node.stream(run.ctx) as tool_stream:
-                                    async for event in tool_stream:
-                                        # Track tool calls and results for memory
-                                        self._track_tool_events(event)
-                                        
-                            elif self.work_agent.is_end_node(node):
-                                logger.info("EndNode: run completed")
-                                if content_streamed:
-                                    logger.info(f"Final result: {run.result.data}")
-                                else:
-                                    # If no content was streamed, yield the final result
-                                    final_result = str(run.result.data)
-                                    full_response_text = final_result
-                                    yield final_result
-                            else:
-                                logger.info(f"Unknown Node: {type(node)}")
-                                
-                        # Get usage info from the run
-                        usage_info = run.usage()
-                        
-            else:
-                # No MCP tools, use same approach without MCP context
-                logger.info("No MCP tools, using graph iteration")
+                # Use agent.iter() for proper streaming with tool calls
                 async with self.work_agent.iter(user_message) as run:
                     content_streamed = False
-                    
+
                     async for node in run:
                         if self.work_agent.is_user_prompt_node(node):
                             logger.info(f"UserPromptNode: {getattr(node, 'user_prompt', str(node))}")
@@ -578,14 +534,14 @@ class HierarchicalConversationManager:
                                         content_streamed = True
                                         full_response_text += content
                                         yield content
-                                        
+
                         elif self.work_agent.is_call_tools_node(node):
                             logger.info("ToolCallNode: processing tool calls")
                             async with node.stream(run.ctx) as tool_stream:
                                 async for event in tool_stream:
                                     # Track tool calls and results for memory
                                     self._track_tool_events(event)
-                                    
+
                         elif self.work_agent.is_end_node(node):
                             logger.info("EndNode: run completed")
                             if content_streamed:
@@ -597,7 +553,7 @@ class HierarchicalConversationManager:
                                 yield final_result
                         else:
                             logger.info(f"Unknown Node: {type(node)}")
-                            
+
                     # Get usage info from the run
                     usage_info = run.usage()
 
@@ -651,12 +607,8 @@ class HierarchicalConversationManager:
 
             # Generate AI response using PydanticAI with history processor
             # The history processor will automatically manage conversation memory
-            if self.has_mcp_tools:
-                # Use MCP context manager for tools
-                async with self.work_agent.run_mcp_servers():
-                    response = await self.work_agent.run(user_prompt=user_message)
-            else:
-                # No MCP tools, run directly
+            # MCP tools are essential to the architecture, always use them
+            async with self.work_agent.run_mcp_servers():
                 response = await self.work_agent.run(user_prompt=user_message)
 
             # Save the user message as a node
