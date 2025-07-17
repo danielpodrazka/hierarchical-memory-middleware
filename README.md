@@ -333,6 +333,49 @@ uv sync
 pip install -e .
 ```
 
+## Quick Start
+
+After installation, you can start using the hierarchical memory middleware immediately:
+
+1. **Start the MCP server** (required for memory operations):
+
+```bash
+# Start the MCP server
+python hierarchical_memory_middleware/mcp_server/run_server.py
+```
+
+2. **Start an interactive chat session**:
+
+```bash
+# Start an interactive chat session
+python -m hierarchical_memory_middleware.cli chat
+```
+
+This will:
+- Start a conversation with intelligent memory compression
+- Automatically create a conversation database
+- Provide MCP tools for memory browsing
+- Use your configured model (default: claude-sonnet-4)
+
+### Your First Conversation
+
+```
+🤖 Welcome to Hierarchical Memory Middleware!
+🧠 Starting new conversation with infinite memory...
+
+You: Let's discuss the architecture of a web application
+AI: I'd be happy to discuss web application architecture...
+
+# Later in the conversation (after many exchanges)
+You: What did we say about the database layer earlier?
+AI: Let me search our conversation history...
+    🔍 [Using MCP tools to find relevant nodes]
+    📄 [Expanding compressed memories]
+    Based on our earlier discussion about the database layer...
+```
+
+The AI automatically manages its memory, compressing older exchanges while maintaining perfect recall through MCP tools.
+
 ## Configuration
 
 ### Environment Variables
