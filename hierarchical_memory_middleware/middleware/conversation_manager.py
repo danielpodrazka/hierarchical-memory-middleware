@@ -13,6 +13,12 @@ from pydantic_ai.messages import (
     ModelResponse,
     UserPromptPart,
     TextPart,
+    PartStartEvent,
+    PartDeltaEvent,
+    TextPartDelta,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ToolCallPart,
 )
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
@@ -501,130 +507,99 @@ class HierarchicalConversationManager:
             self._current_tool_results = []
 
             full_response_text = ""
-            final_response = None
-            
-            # Simple response-like object for compatibility with existing code
-            class MockResponse:
-                def __init__(self, output_text):
-                    self.output = output_text
-                    self._usage = None
-                def usage(self):
-                    return self._usage
+            usage_info = None
 
-            # Multi-phase streaming with proper tool handling
             logger.info(f"Starting chat_stream with has_mcp_tools={self.has_mcp_tools}")
-            
-            # Phase 1: Initial streaming
+
+            # Use proper pydantic-ai streaming with graph iteration
             if self.has_mcp_tools:
                 logger.info("Entering MCP context manager")
                 async with self.work_agent.run_mcp_servers():
-                    logger.info("MCP context manager entered, starting multi-phase streaming")
+                    logger.info("MCP context manager entered, starting graph iteration")
                     
-                    # Keep streaming until no more tool calls are needed
-                    message_history = None
-                    phase = 1
-                    
-                    while True:
-                        logger.info(f"Starting streaming phase {phase}")
+                    # Use agent.iter() for proper streaming with tool calls
+                    async with self.work_agent.iter(user_message) as run:
+                        content_streamed = False
                         
-                        # Create the streaming request
-                        if phase == 1:
-                            # First phase: use the user prompt
-                            stream_kwargs = {"user_prompt": user_message}
-                        else:
-                            # Subsequent phases: use message history that includes tool results
-                            stream_kwargs = {"message_history": message_history}
+                        async for node in run:
+                            if self.work_agent.is_user_prompt_node(node):
+                                logger.info(f"UserPromptNode: {getattr(node, 'user_prompt', str(node))}")
 
-                        logger.info(f"About to call run_stream with kwargs: {stream_kwargs}")
-                        async with self.work_agent.run_stream(**stream_kwargs) as stream_result:
-                            logger.info(f"Streaming phase {phase} started with stream_result: {stream_result}")
-
-                            # Stream text as it comes
-                            phase_text = ""
-                            logger.info(f"About to start streaming loop with stream_result: {stream_result}")
-                            async for chunk in stream_result.stream_text(delta=True):
-                                logger.info(f"Received chunk from stream: '{chunk}'")
-                                if chunk:
-                                    logger.info(f"Yielding chunk: '{chunk}'")
-                                    phase_text += chunk
-                                    full_response_text += chunk
-                                    yield chunk
-                            
-                            logger.info(f"Streaming loop completed, phase_text: '{phase_text}'")
-
-                            logger.info(f"Streaming phase {phase} completed, got text: '{phase_text}'")
-                            
-                            # Get the complete response to check for tool calls
-                            try:
-                                # Note: We need to get the complete response to check for tool calls
-                                # This will consume the stream, but we've already yielded the text
-                                complete_response = await stream_result.get_output()
-                                logger.info(f"Got complete response for phase {phase}")
-                                
-                                # Check if there are any tool calls in the response
-                                # We need to examine the message history to see if tools were called
-                                current_messages = stream_result.all_messages()
-                                
-                                # Look for tool calls in the latest messages
-                                tool_calls_found = False
-                                for msg in current_messages:
-                                    if hasattr(msg, 'parts'):
-                                        for part in msg.parts:
-                                            if hasattr(part, 'tool_name') and part.tool_name:
-                                                tool_calls_found = True
-                                                logger.info(f"Found tool call: {part.tool_name}")
-                                                
-                                                # Track the tool call
-                                                self._current_tool_calls.append({
-                                                    "tool_name": part.tool_name,
-                                                    "tool_call_id": getattr(part, 'tool_call_id', f"tool_call_{len(self._current_tool_calls)}"),
-                                                    "args": getattr(part, 'args', {}),
-                                                })
-                                                
-                                if not tool_calls_found:
-                                    # No more tool calls, we're done
-                                    logger.info("No tool calls found, streaming complete")
-                                    final_response = MockResponse(full_response_text)
-                                    break
+                            elif self.work_agent.is_model_request_node(node):
+                                logger.info("ModelRequestNode: streaming partial request tokens")
+                                async with node.stream(run.ctx) as request_stream:
+                                    async for event in request_stream:
+                                        # Handle different event types for streaming
+                                        content = self._extract_streamable_content(event)
+                                        if content:
+                                            content_streamed = True
+                                            full_response_text += content
+                                            yield content
+                                            
+                            elif self.work_agent.is_call_tools_node(node):
+                                logger.info("ToolCallNode: processing tool calls")
+                                async with node.stream(run.ctx) as tool_stream:
+                                    async for event in tool_stream:
+                                        # Track tool calls and results for memory
+                                        self._track_tool_events(event)
+                                        
+                            elif self.work_agent.is_end_node(node):
+                                logger.info("EndNode: run completed")
+                                if content_streamed:
+                                    logger.info(f"Final result: {run.result.data}")
                                 else:
-                                    # Tool calls found, prepare for next phase
-                                    logger.info("Tool calls found, preparing for next phase")
-                                    message_history = current_messages
-                                    phase += 1
-                                    
-                                    # Add a small delay to ensure tools are processed
-                                    await asyncio.sleep(0.01)
-                                    
-                            except Exception as e:
-                                logger.error(f"Error getting complete response in phase {phase}: {e}", exc_info=True)
-                                # If we can't get the complete response, assume no more tool calls
-                                final_response = MockResponse(full_response_text)
-                                break
-                            
-                            # Safety check to prevent infinite loops
-                            if phase > 10:
-                                logger.warning("Too many streaming phases, breaking")
-                                final_response = MockResponse(full_response_text)
-                                break
-                            
+                                    # If no content was streamed, yield the final result
+                                    final_result = str(run.result.data)
+                                    full_response_text = final_result
+                                    yield final_result
+                            else:
+                                logger.info(f"Unknown Node: {type(node)}")
+                                
+                        # Get usage info from the run
+                        usage_info = run.usage()
+                        
             else:
-                # No MCP tools, simpler streaming
-                async with self.work_agent.run_stream(user_prompt=user_message) as stream_result:
-                    async for chunk in stream_result.stream_text(delta=True):
-                        if chunk:
-                            full_response_text += chunk
-                            yield chunk
+                # No MCP tools, use same approach without MCP context
+                logger.info("No MCP tools, using graph iteration")
+                async with self.work_agent.iter(user_message) as run:
+                    content_streamed = False
                     
-                    try:
-                        complete_response = await stream_result.get_output()
-                        final_response = MockResponse(full_response_text)
-                    except Exception as e:
-                        logger.debug(f"Could not get complete response: {e}")
-                        final_response = MockResponse(full_response_text)
+                    async for node in run:
+                        if self.work_agent.is_user_prompt_node(node):
+                            logger.info(f"UserPromptNode: {getattr(node, 'user_prompt', str(node))}")
 
-            # Ensure final_response is properly initialized
-            if final_response is None:
-                final_response = MockResponse(full_response_text)
+                        elif self.work_agent.is_model_request_node(node):
+                            logger.info("ModelRequestNode: streaming partial request tokens")
+                            async with node.stream(run.ctx) as request_stream:
+                                async for event in request_stream:
+                                    # Handle different event types for streaming
+                                    content = self._extract_streamable_content(event)
+                                    if content:
+                                        content_streamed = True
+                                        full_response_text += content
+                                        yield content
+                                        
+                        elif self.work_agent.is_call_tools_node(node):
+                            logger.info("ToolCallNode: processing tool calls")
+                            async with node.stream(run.ctx) as tool_stream:
+                                async for event in tool_stream:
+                                    # Track tool calls and results for memory
+                                    self._track_tool_events(event)
+                                    
+                        elif self.work_agent.is_end_node(node):
+                            logger.info("EndNode: run completed")
+                            if content_streamed:
+                                logger.info(f"Final result: {run.result.data}")
+                            else:
+                                # If no content was streamed, yield the final result
+                                final_result = str(run.result.data)
+                                full_response_text = final_result
+                                yield final_result
+                        else:
+                            logger.info(f"Unknown Node: {type(node)}")
+                            
+                    # Get usage info from the run
+                    usage_info = run.usage()
 
             # Save nodes after streaming is complete
             user_node = await self.storage.save_conversation_node(
@@ -633,47 +608,36 @@ class HierarchicalConversationManager:
                 content=user_message,
             )
 
-            # Extract token usage from final response
+            # Extract token usage
             tokens_used = None
             try:
-                if hasattr(final_response, "usage"):
-                    if callable(final_response.usage):
-                        usage_info = final_response.usage()
-                        tokens_used = getattr(usage_info, "total_tokens", None)
-                    else:
-                        usage_info = final_response.usage
-                        tokens_used = usage_info.get("total_tokens", None)
+                if usage_info:
+                    tokens_used = getattr(usage_info, "total_tokens", None)
             except Exception as e:
                 logger.debug(f"Could not extract token usage: {e}")
                 tokens_used = None
 
-            # Ensure final_response is properly initialized
-            if final_response is None:
-                final_response = MockResponse(full_response_text)
-
-            # Build comprehensive content including tool calls and results
-            comprehensive_content = self._build_comprehensive_content(final_response)
-
+            # Save assistant response node
             ai_node = await self.storage.save_conversation_node(
                 conversation_id=self.conversation_id,
                 node_type=NodeType.AI,
-                content=comprehensive_content,
+                content=full_response_text,
                 tokens_used=tokens_used,
                 ai_components={
-                    "assistant_text": full_response_text,  # Now contains ALL streamed text
+                    "assistant_text": full_response_text,
                     "model_used": self.config.work_model,
-                    "tool_calls": self._extract_tool_calls(final_response),
-                    "tool_results": self._extract_tool_results(final_response),
+                    "tool_calls": self._current_tool_calls,
+                    "tool_results": self._current_tool_results,
                 },
             )
 
+
             await self._check_and_compress()
-            logger.info("Multi-phase streaming completed successfully")
+            logger.info("chat_stream completed successfully")
 
         except Exception as e:
-            logger.error(f"Error in streaming chat: {str(e)}", exc_info=True)
-            yield f"Error: {str(e)}"
-            return  # End generator on error
+            logger.error(f"Error in chat_stream: {e}", exc_info=True)
+            raise
 
     async def chat(self, user_message: str) -> str:
         """Main conversation interface with hierarchical memory integration."""
@@ -916,3 +880,40 @@ class HierarchicalConversationManager:
         except Exception as e:
             logger.error(f"Error getting node details: {str(e)}", exc_info=True)
             return None
+
+    def _extract_streamable_content(self, event) -> str:
+        """Extract streamable content from pydantic-ai events."""
+        # Content we care about streaming
+        if isinstance(event, PartStartEvent) and hasattr(event.part, 'content'):
+            return event.part.content
+        elif isinstance(event, PartDeltaEvent) and hasattr(event, 'delta') and isinstance(event.delta, TextPartDelta):
+            return event.delta.content_delta
+        
+        return ""
+
+    def _track_tool_events(self, event):
+        """Track tool calls and results for memory storage."""
+        if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
+            # Track tool call
+            self._current_tool_calls.append({
+                "tool_name": event.part.tool_name,
+                "tool_call_id": getattr(event.part, 'tool_call_id', f"tool_call_{len(self._current_tool_calls)}"),
+                "args": getattr(event.part, 'args', {}),
+            })
+            logger.info(f"Tracked tool call: {event.part.tool_name}")
+
+        elif isinstance(event, FunctionToolCallEvent):
+            # Log tool call event - check what attributes are available
+            logger.info(f"Tool call event: {type(event).__name__} - {getattr(event, 'tool_call_id', 'no_id')}")
+
+        elif isinstance(event, FunctionToolResultEvent):
+            # Track tool result - use available attributes defensively
+            tool_call_id = getattr(event, 'tool_call_id', 'unknown')
+            result_str = str(getattr(event, 'result', 'no_result'))
+            self._current_tool_results.append({
+                "tool_name": "unknown",  # FunctionToolResultEvent might not have tool_name
+                "tool_call_id": tool_call_id,
+                "result": result_str,
+            })
+            logger.info(f"Tracked tool result: {tool_call_id}")
+
