@@ -16,6 +16,21 @@ The Hierarchical Memory Middleware solves the fundamental problem of context win
 - **💾 Persistent Storage**: DuckDB-based storage with full conversation history
 - **🔍 Advanced Search**: Full-text and regex search across conversation history
 
+## Performance at Scale
+
+See the dramatic efficiency gains through intelligent compression:
+
+```mermaid
+xychart-beta
+    title "Token Usage: Traditional vs Hierarchical"
+    x-axis ["10 Nodes", "50 Nodes", "100 Nodes", "500 Nodes", "1000 Nodes"]
+    y-axis "Tokens Used" 0 --> 150000
+    line [8000, 40000, 80000, 400000, 800000]
+    line [8000, 12000, 15000, 25000, 35000]
+```
+
+*🔴 Traditional approach hits context limits quickly • 🟢 Hierarchical Memory scales infinitely*
+
 ## Architecture
 
 ### Core Components
@@ -70,6 +85,121 @@ The Hierarchical Memory Middleware solves the fundamental problem of context win
 ├─ Major decisions and outcomes only
 ├─ Long-term context preservation
 └─ Historical reference points
+```
+
+## Visual Architecture
+
+### Conversation Flow
+
+This sequence diagram shows how a conversation works with the hierarchical memory middleware:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Middleware as Hierarchical Memory<br/>Middleware
+    participant Storage as DuckDB<br/>Storage
+    participant LLM as PydanticAI<br/>Agent
+    participant MCP as MCP Memory<br/>Tools
+
+    User->>Middleware: "What was our token refresh strategy?"
+
+    Note over Middleware,Storage: Prepare optimized context
+    Middleware->>Storage: Get recent nodes (FULL level)
+    Storage-->>Middleware: Last 10 nodes
+    Middleware->>Storage: Get compressed summaries
+    Storage-->>Middleware: Older nodes as summaries
+
+    Note over Middleware: Build context with:<br/>- Recent full nodes<br/>- Compressed summaries<br/>- System prompt
+
+    Middleware->>LLM: Send optimized context + user message
+
+    Note over LLM: Realizes it needs more detail<br/>about older conversation
+
+    LLM->>MCP: expand_node(6)
+    MCP->>Storage: Get full node 6 content
+    Storage-->>MCP: Full 45-line token refresh explanation
+    MCP-->>LLM: Complete node 6 details
+
+    LLM-->>Middleware: "Based on node 6, here's our strategy..."
+
+    Note over Middleware,Storage: Store new conversation
+    Middleware->>Storage: Save user node
+    Middleware->>Storage: Save AI response node
+
+    Note over Middleware,Storage: Check compression triggers
+    Middleware->>Storage: Compress old nodes if needed
+
+    Middleware-->>User: Complete answer with details from node 6
+```
+
+### Compression Flow
+
+This flowchart shows how conversation nodes move through compression levels:
+
+```mermaid
+flowchart TD
+    Start([New Conversation Node]) --> Recent{Recent?<br/>< 10 nodes}
+
+    Recent -->|Yes| Full["🟢 FULL LEVEL<br/>Complete content<br/>All details preserved"]
+    Recent -->|No| CheckAge{Age?<br/>< 50 nodes}
+
+    CheckAge -->|Yes| Summary["🟡 SUMMARY LEVEL<br/>1-2 sentence summary<br/>+ line count<br/>Key topics preserved"]
+    CheckAge -->|No| CheckOlder{Age?<br/>< 200 nodes}
+
+    CheckOlder -->|Yes| Meta["🟠 META LEVEL<br/>Group summaries<br/>20-40 nodes per group<br/>High-level themes"]
+    CheckOlder -->|No| Archive["🔴 ARCHIVE LEVEL<br/>Very compressed<br/>Major decisions only<br/>Long-term context"]
+
+    Full --> Trigger1{"Conversation<br/>grows?"}
+    Summary --> Trigger2{"Conversation<br/>grows?"}
+    Meta --> Trigger3{"Conversation<br/>grows?"}
+
+    Trigger1 -->|Yes| Summary
+    Trigger2 -->|Yes| Meta
+    Trigger3 -->|Yes| Archive
+
+    Full --> MCP1["🔍 expand_node()<br/>Returns full content"]
+    Summary --> MCP2["🔍 expand_node()<br/>Returns full content"]
+    Meta --> MCP3["🔍 expand_node()<br/>Returns group details"]
+    Archive --> MCP4["🔍 expand_node()<br/>Returns archived content"]
+```
+
+### System Components
+
+This diagram shows the complete system architecture:
+
+```mermaid
+graph TB
+    subgraph "User Interface"
+        User[👤 User]
+    end
+
+    subgraph "Hierarchical Memory Middleware"
+        CM["🧠 Conversation Manager<br/>• Context optimization<br/>• Compression triggers<br/>• Response orchestration"]
+        HB["📊 Hierarchy Builder<br/>• Smart summarization<br/>• Importance scoring<br/>• Level management"]
+    end
+
+    subgraph "AI Agents (PydanticAI)"
+        Work["🤖 Work Agent<br/>(i.e. Claude Sonnet)<br/>Main conversations"]
+        Sum["📝 Summary Agent<br/>Compression tasks"]
+    end
+
+    subgraph "Storage Layer"
+        DB["🗄️ DuckDB<br/>• Conversation nodes<br/>• Compression levels<br/>• Embeddings<br/>• Metadata"]
+    end
+
+    subgraph "MCP Memory Tools"
+        MCP["🔧 Memory Tools<br/>• expand_node(id)<br/>• find(query)<br/>• get_conversation_stats()<br/>• set_conversation_id()"]
+    end
+
+    User -.->|"Chat message"| CM
+    CM -->|"Prepare context"| DB
+    CM -->|"Generate response"| Work
+    Work <-->|"MCP calls during response"| MCP
+    MCP <--> DB
+    CM -->|"Compress old nodes"| Sum
+    Sum --> HB
+    HB --> DB
+    CM -.->|"Response"| User
 ```
 
 ## Installation
@@ -287,11 +417,6 @@ Provides conversation overview including:
 - `deepseek-chat` - General conversation
 - `deepseek-coder` - Code-specialized
 
-### Others
-- Together AI (Llama models)
-- Cohere
-- Mistral
-
 ## Configuration Options
 
 ```python
@@ -423,15 +548,6 @@ MIT License - see [LICENSE](LICENSE) for details.
     "Archive Level" : 200
     "System Prompts" : 1200
 
-
-```mermaid
-xychart-beta
-    title "Token Usage: Traditional vs Hierarchical"
-    x-axis ["10 Nodes", "50 Nodes", "100 Nodes", "500 Nodes", "1000 Nodes"]
-    y-axis "Tokens Used" 0 --> 150000
-    line [8000, 40000, 80000, 400000, 800000]
-    line [8000, 12000, 15000, 25000, 35000]
-```
 
 ---
 
