@@ -557,6 +557,115 @@ config = Config(
 )
 ```
 
+## External MCP Server Integration
+
+The middleware supports automatic management of external MCP servers through the `SimpleMCPManager` class. This allows you to run multiple MCP servers alongside the internal memory server, giving AI agents access to additional tools like file editing, web search, and GitHub integration.
+
+### Configuration
+
+Create a configuration file at `~/.config/hierarchical_memory_middleware/mcp_servers.json`:
+
+```json
+{
+  "text-editor": {
+    "command": "npx",
+    "args": ["@modelcontextprotocol/server-text-editor"],
+    "env": {},
+    "port": 8002,
+    "tool_prefix": "text-editor",
+    "enabled": true
+  },
+  "web-search": {
+    "command": "npx",
+    "args": ["@modelcontextprotocol/server-web-search"],
+    "env": {
+      "SEARCH_API_KEY": "your-search-api-key"
+    },
+    "port": 8003,
+    "tool_prefix": "web",
+    "enabled": false
+  },
+  "github": {
+    "command": "npx",
+    "args": ["@modelcontextprotocol/server-github"],
+    "env": {
+      "GITHUB_TOKEN": "your-github-token"
+    },
+    "port": 8004,
+    "tool_prefix": "github",
+    "enabled": false
+  }
+}
+```
+
+### Configuration Fields
+
+Each external MCP server configuration includes:
+
+- **`command`**: The command to run the MCP server (e.g., `npx`, `python`, `node`)
+- **`args`**: Array of command-line arguments
+- **`env`**: Environment variables specific to this server
+- **`port`**: Port number for the HTTP MCP server
+- **`tool_prefix`**: Prefix added to all tool names from this server
+- **`enabled`**: Whether this server should be started
+
+### Automatic Management
+
+When using the CLI interface, external MCP servers are automatically managed:
+
+1. **Startup**: Servers marked as `enabled: true` are started automatically
+2. **Integration**: Tools are made available to AI agents with the specified prefix
+3. **Cleanup**: All servers are properly terminated when the session ends
+
+### Programmatic Usage
+
+```python
+import asyncio
+from hierarchical_memory_middleware.config import Config
+from hierarchical_memory_middleware.mcp_manager import SimpleMCPManager
+from hierarchical_memory_middleware.middleware.conversation_manager import HierarchicalConversationManager
+
+async def conversation_with_external_tools():
+    config = Config(work_model="claude-sonnet-4")
+    
+    # Load external server configurations
+    external_servers = config.load_external_mcp_servers()
+    
+    # Start external MCP servers
+    mcp_manager = SimpleMCPManager()
+    external_clients = []
+    
+    for server_name, server_config in external_servers.items():
+        client = await mcp_manager.start_server(server_name, server_config)
+        if client:
+            external_clients.append(client)
+    
+    try:
+        # Create conversation manager with external tools
+        manager = HierarchicalConversationManager(
+            config,
+            mcp_server_url="http://127.0.0.1:8001",  # internal memory server
+            external_mcp_servers=external_clients      # external tools
+        )
+        
+        conversation_id = await manager.start_conversation()
+        
+        # AI now has access to memory tools + external tools
+        response = await manager.chat("""
+            Can you help me edit a file and then search for information online?
+            Use your text-editor tools to create a file and web tools to search.
+        """)
+        
+        print(response)
+        
+    finally:
+        # Clean up all external servers
+        mcp_manager.stop_all()
+
+asyncio.run(conversation_with_external_tools())
+```
+
+
 ## Development
 
 ### Setup Development Environment
