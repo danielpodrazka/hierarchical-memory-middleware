@@ -690,3 +690,4 @@ class DuckDBStorage:
             )
 
             return self._row_to_single_node(node_result)
+
