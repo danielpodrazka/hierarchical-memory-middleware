@@ -92,7 +92,9 @@ class HierarchicalConversationManager:
         try:
             # Use model manager to create the appropriate model instance
             model_instance = ModelManager.create_model(config.work_model)
-            logger.info(f"Successfully created model instance for: {config.work_model}")
+            logger.debug(
+                f"Successfully created model instance for: {config.work_model}"
+            )
         except Exception as e:
             logger.exception(f"Failed to create model {config.work_model}: {str(e)}")
             raise ValueError(
@@ -118,7 +120,7 @@ class HierarchicalConversationManager:
         # Track what the AI actually sees for debugging/visualization
         self._last_ai_view_data = None
 
-        logger.info(
+        logger.debug(
             f"Initialized HierarchicalConversationManager with model: {config.work_model} and MCP tools"
         )
 
@@ -147,7 +149,7 @@ class HierarchicalConversationManager:
                 result_str = result_str[:500] + "... (truncated)"
 
             logger.info(f"📤 RESULT: {result_str}")
-            logger.info(f"✅ TOOL CALL COMPLETED: {tool_name}")
+            logger.debug(f"✅ TOOL CALL COMPLETED: {tool_name}")
 
             # Store the tool result
             self._current_tool_results.append(
@@ -214,7 +216,9 @@ class HierarchicalConversationManager:
 
         # CRITICAL: If there are active tool calls, don't interfere with the flow
         if self._has_active_tool_calls(messages):
-            logger.debug("Active tool calls detected, skipping memory processing but capturing basic AI view")
+            logger.debug(
+                "Active tool calls detected, skipping memory processing but capturing basic AI view"
+            )
             # Still capture basic AI view data for tool call scenarios
             self._last_ai_view_data = {
                 "compressed_nodes": [],
@@ -222,7 +226,8 @@ class HierarchicalConversationManager:
                 "recent_messages_from_input": [
                     {
                         "message_type": msg.__class__.__name__,
-                        "content": str(msg)[:200] + ('...' if len(str(msg)) > 200 else ''),
+                        "content": str(msg)[:200]
+                        + ("..." if len(str(msg)) > 200 else ""),
                     }
                     for msg in messages[-3:]  # Last 3 messages for context
                 ],
@@ -362,17 +367,19 @@ class HierarchicalConversationManager:
                         "message_type": msg.__class__.__name__,
                         "parts": [],
                     }
-                    
+
                     if hasattr(msg, "parts"):
                         # Extract detailed content from message parts - show what AI actually sees
                         for part in msg.parts:
                             part_data = {
                                 "part_type": part.__class__.__name__,
                             }
-                            
+
                             if hasattr(part, "content") and part.content is not None:
                                 # Regular content (text, system prompts, etc.)
-                                part_data["content"] = str(part.content)[:500] + ('...' if len(str(part.content)) > 500 else '')
+                                part_data["content"] = str(part.content)[:500] + (
+                                    "..." if len(str(part.content)) > 500 else ""
+                                )
                             elif hasattr(part, "tool_name"):
                                 # Tool call part - show what AI sees
                                 part_data["tool_call"] = {
@@ -380,33 +387,55 @@ class HierarchicalConversationManager:
                                     "tool_call_id": getattr(part, "tool_call_id", None),
                                     "args": getattr(part, "args", None),
                                 }
-                            elif hasattr(part, "tool_call_id") and hasattr(part, "content"):
+                            elif hasattr(part, "tool_call_id") and hasattr(
+                                part, "content"
+                            ):
                                 # Tool result part - show what AI receives
                                 part_data["tool_result"] = {
                                     "tool_call_id": getattr(part, "tool_call_id", None),
                                     "tool_name": getattr(part, "tool_name", None),
-                                    "content": str(getattr(part, "content", ""))[:500] + ('...' if len(str(getattr(part, "content", ""))) > 500 else ''),
+                                    "content": str(getattr(part, "content", ""))[:500]
+                                    + (
+                                        "..."
+                                        if len(str(getattr(part, "content", ""))) > 500
+                                        else ""
+                                    ),
                                 }
                             else:
                                 # Other part types
-                                part_data["raw_content"] = str(part)[:200] + ('...' if len(str(part)) > 200 else '')
-                            
+                                part_data["raw_content"] = str(part)[:200] + (
+                                    "..." if len(str(part)) > 200 else ""
+                                )
+
                             message_data["parts"].append(part_data)
-                        
+
                         # Create a summary content for readability
                         content_summary = []
                         for part in msg.parts:
                             if hasattr(part, "content") and part.content:
-                                content_summary.append(str(part.content)[:100] + ('...' if len(str(part.content)) > 100 else ''))
+                                content_summary.append(
+                                    str(part.content)[:100]
+                                    + ("..." if len(str(part.content)) > 100 else "")
+                                )
                             elif hasattr(part, "tool_name"):
                                 content_summary.append(f"[TOOL CALL: {part.tool_name}]")
                             elif hasattr(part, "tool_call_id"):
-                                content_summary.append(f"[TOOL RESULT: {getattr(part, 'tool_name', 'unknown')}]")
-                        message_data["content_summary"] = " | ".join(content_summary) if content_summary else str(msg)[:200]
+                                content_summary.append(
+                                    f"[TOOL RESULT: {getattr(part, 'tool_name', 'unknown')}]"
+                                )
+                        message_data["content_summary"] = (
+                            " | ".join(content_summary)
+                            if content_summary
+                            else str(msg)[:200]
+                        )
                     else:
                         # No parts, just convert to string
-                        message_data["content_summary"] = str(msg)[:200] + ('...' if len(str(msg)) > 200 else '')
-                        message_data["raw_message"] = str(msg)[:500] + ('...' if len(str(msg)) > 500 else '')
+                        message_data["content_summary"] = str(msg)[:200] + (
+                            "..." if len(str(msg)) > 200 else ""
+                        )
+                        message_data["raw_message"] = str(msg)[:500] + (
+                            "..." if len(str(msg)) > 500 else ""
+                        )
 
                     ai_view_data["recent_messages_from_input"].append(message_data)
 
@@ -431,17 +460,19 @@ class HierarchicalConversationManager:
                         "message_type": msg.__class__.__name__,
                         "parts": [],
                     }
-                    
+
                     if hasattr(msg, "parts"):
                         # Extract detailed content from message parts - show what AI actually sees
                         for part in msg.parts:
                             part_data = {
                                 "part_type": part.__class__.__name__,
                             }
-                            
+
                             if hasattr(part, "content") and part.content is not None:
                                 # Regular content (text, system prompts, etc.)
-                                part_data["content"] = str(part.content)[:500] + ('...' if len(str(part.content)) > 500 else '')
+                                part_data["content"] = str(part.content)[:500] + (
+                                    "..." if len(str(part.content)) > 500 else ""
+                                )
                             elif hasattr(part, "tool_name"):
                                 # Tool call part - show what AI sees
                                 part_data["tool_call"] = {
@@ -449,33 +480,55 @@ class HierarchicalConversationManager:
                                     "tool_call_id": getattr(part, "tool_call_id", None),
                                     "args": getattr(part, "args", None),
                                 }
-                            elif hasattr(part, "tool_call_id") and hasattr(part, "content"):
+                            elif hasattr(part, "tool_call_id") and hasattr(
+                                part, "content"
+                            ):
                                 # Tool result part - show what AI receives
                                 part_data["tool_result"] = {
                                     "tool_call_id": getattr(part, "tool_call_id", None),
                                     "tool_name": getattr(part, "tool_name", None),
-                                    "content": str(getattr(part, "content", ""))[:500] + ('...' if len(str(getattr(part, "content", ""))) > 500 else ''),
+                                    "content": str(getattr(part, "content", ""))[:500]
+                                    + (
+                                        "..."
+                                        if len(str(getattr(part, "content", ""))) > 500
+                                        else ""
+                                    ),
                                 }
                             else:
                                 # Other part types
-                                part_data["raw_content"] = str(part)[:200] + ('...' if len(str(part)) > 200 else '')
-                            
+                                part_data["raw_content"] = str(part)[:200] + (
+                                    "..." if len(str(part)) > 200 else ""
+                                )
+
                             message_data["parts"].append(part_data)
-                        
+
                         # Create a summary content for readability
                         content_summary = []
                         for part in msg.parts:
                             if hasattr(part, "content") and part.content:
-                                content_summary.append(str(part.content)[:100] + ('...' if len(str(part.content)) > 100 else ''))
+                                content_summary.append(
+                                    str(part.content)[:100]
+                                    + ("..." if len(str(part.content)) > 100 else "")
+                                )
                             elif hasattr(part, "tool_name"):
                                 content_summary.append(f"[TOOL CALL: {part.tool_name}]")
                             elif hasattr(part, "tool_call_id"):
-                                content_summary.append(f"[TOOL RESULT: {getattr(part, 'tool_name', 'unknown')}]")
-                        message_data["content_summary"] = " | ".join(content_summary) if content_summary else str(msg)[:200]
+                                content_summary.append(
+                                    f"[TOOL RESULT: {getattr(part, 'tool_name', 'unknown')}]"
+                                )
+                        message_data["content_summary"] = (
+                            " | ".join(content_summary)
+                            if content_summary
+                            else str(msg)[:200]
+                        )
                     else:
                         # No parts, just convert to string
-                        message_data["content_summary"] = str(msg)[:200] + ('...' if len(str(msg)) > 200 else '')
-                        message_data["raw_message"] = str(msg)[:500] + ('...' if len(str(msg)) > 500 else '')
+                        message_data["content_summary"] = str(msg)[:200] + (
+                            "..." if len(str(msg)) > 200 else ""
+                        )
+                        message_data["raw_message"] = str(msg)[:500] + (
+                            "..." if len(str(msg)) > 500 else ""
+                        )
 
                     ai_view_data["recent_messages_from_input"].append(message_data)
 
@@ -517,38 +570,43 @@ class HierarchicalConversationManager:
             os.makedirs(conversations_dir, exist_ok=True)
 
             # Create AI view file path
-            ai_view_file = os.path.join(conversations_dir, f"{self.conversation_id}_ai_view.json")
+            ai_view_file = os.path.join(
+                conversations_dir, f"{self.conversation_id}_ai_view.json"
+            )
 
             # Create enhanced view data with summary counts
             view_data = self._last_ai_view_data or {}
-            
+
             enriched_view_data = {
                 "conversation_id": self.conversation_id,
                 "description": "This shows exactly what the AI agent saw in the last message processing",
                 "last_updated": datetime.now().isoformat(),
                 "model_used": self.config.work_model,
-                
                 # Summary counts for quick overview
                 "compressed_nodes_count": len(view_data.get("compressed_nodes", [])),
                 "recent_nodes_count": len(view_data.get("recent_nodes", [])),
-                "recent_messages_from_input_count": len(view_data.get("recent_messages_from_input", [])),
-                "total_messages_sent_to_ai": view_data.get("total_messages_sent_to_ai", 0),
-                
+                "recent_messages_from_input_count": len(
+                    view_data.get("recent_messages_from_input", [])
+                ),
+                "total_messages_sent_to_ai": view_data.get(
+                    "total_messages_sent_to_ai", 0
+                ),
                 # Detailed data - what the AI actually sees
                 "compressed_nodes": view_data.get("compressed_nodes", []),
                 "recent_nodes": view_data.get("recent_nodes", []),
-                "recent_messages_from_input": view_data.get("recent_messages_from_input", []),
-                
+                "recent_messages_from_input": view_data.get(
+                    "recent_messages_from_input", []
+                ),
                 # Additional metadata
                 "note": "Compressed nodes show summaries only (what AI sees), recent nodes show full content",
             }
-            
+
             # Add fallback reason if present
             if "fallback_reason" in view_data:
                 enriched_view_data["fallback_reason"] = view_data["fallback_reason"]
 
             # Save to file
-            with open(ai_view_file, 'w', encoding='utf-8') as f:
+            with open(ai_view_file, "w", encoding="utf-8") as f:
                 json.dump(enriched_view_data, f, indent=2, ensure_ascii=False)
 
             logger.debug(f"AI view data saved to {ai_view_file}")
@@ -557,7 +615,7 @@ class HierarchicalConversationManager:
 
     async def _capture_current_ai_view(self) -> None:
         """Capture the current AI view by querying stored conversation data.
-        
+
         This builds the AI view data structure by actually looking at what's stored
         in the database, showing exactly what the AI sees (summaries for compressed,
         full content for recent nodes).
@@ -598,24 +656,28 @@ class HierarchicalConversationManager:
                     "level": node.level.name if node.level else "FULL",
                     "topics": node.topics or [],
                 }
-                
+
                 # For compressed nodes, AI only sees the summary
-                if node.node_type.name == 'USER':
+                if node.node_type.name == "USER":
                     # For META group nodes, use content; for others, use summary
-                    if hasattr(node.level, 'name') and node.level.name == 'META':
+                    if hasattr(node.level, "name") and node.level.name == "META":
                         content = node.content  # META groups have instructional content
                     else:
-                        content = node.summary or node.content  # Regular compressed nodes use summary
+                        content = (
+                            node.summary or node.content
+                        )  # Regular compressed nodes use summary
                     node_data["content_shown_to_ai"] = content
-                elif node.node_type.name == 'AI':
+                elif node.node_type.name == "AI":
                     # AI nodes: always use summary for compressed
                     content = node.summary or node.content
                     node_data["content_shown_to_ai"] = content
-                    
+
                 ai_view_data["compressed_nodes"].append(node_data)
 
             # Process recent nodes (AI sees full content)
-            for node in recent_nodes[-8:]:  # Last 8 recent nodes (same as memory processor)
+            for node in recent_nodes[
+                -8:
+            ]:  # Last 8 recent nodes (same as memory processor)
                 node_data = {
                     "node_id": node.node_id,
                     "node_type": node.node_type.name.lower(),
@@ -625,17 +687,22 @@ class HierarchicalConversationManager:
                     "topics": node.topics or [],
                     "content_shown_to_ai": node.content,  # AI sees full content for recent nodes
                 }
-                
+
                 # Add AI components for AI nodes - show what the AI actually saw
-                if node.node_type.name == 'AI' and node.ai_components:
+                if node.node_type.name == "AI" and node.ai_components:
                     import json
+
                     try:
-                        ai_components = json.loads(node.ai_components) if isinstance(node.ai_components, str) else node.ai_components
-                        
+                        ai_components = (
+                            json.loads(node.ai_components)
+                            if isinstance(node.ai_components, str)
+                            else node.ai_components
+                        )
+
                         # Extract tool calls and results - what the AI actually saw
                         tool_calls = ai_components.get("tool_calls", [])
                         tool_results = ai_components.get("tool_results", [])
-                        
+
                         node_data["ai_components"] = {
                             "model_used": ai_components.get("model_used"),
                             "assistant_text": ai_components.get("assistant_text", ""),
@@ -643,7 +710,7 @@ class HierarchicalConversationManager:
                             "tool_results_count": len(tool_results),
                             "has_tools": len(tool_calls) > 0,
                         }
-                        
+
                         # Show the actual tool calls the AI made
                         if tool_calls:
                             node_data["tool_calls_ai_made"] = []
@@ -654,7 +721,7 @@ class HierarchicalConversationManager:
                                     "args": call.get("args"),
                                 }
                                 node_data["tool_calls_ai_made"].append(call_info)
-                        
+
                         # Show the actual tool results the AI received
                         if tool_results:
                             node_data["tool_results_ai_received"] = []
@@ -664,14 +731,20 @@ class HierarchicalConversationManager:
                                     "content": result.get("content"),
                                     "timestamp": result.get("timestamp"),
                                 }
-                                node_data["tool_results_ai_received"].append(result_info)
-                        
+                                node_data["tool_results_ai_received"].append(
+                                    result_info
+                                )
+
                     except Exception as e:
-                        logger.debug(f"Failed to parse AI components for node {node.node_id}: {e}")
+                        logger.debug(
+                            f"Failed to parse AI components for node {node.node_id}: {e}"
+                        )
                         # Fallback to basic info
                         node_data["ai_components"] = {
                             "error": f"Failed to parse AI components: {str(e)}",
-                            "raw_components": str(node.ai_components)[:200] + "..." if len(str(node.ai_components)) > 200 else str(node.ai_components)
+                            "raw_components": str(node.ai_components)[:200] + "..."
+                            if len(str(node.ai_components)) > 200
+                            else str(node.ai_components),
                         }
 
                 ai_view_data["recent_nodes"].append(node_data)
@@ -685,7 +758,9 @@ class HierarchicalConversationManager:
 
             # Store the captured data
             self._last_ai_view_data = ai_view_data
-            logger.debug(f"AI view captured: {len(compressed_nodes)} compressed, {len(recent_nodes)} recent nodes")
+            logger.debug(
+                f"AI view captured: {len(compressed_nodes)} compressed, {len(recent_nodes)} recent nodes"
+            )
 
         except Exception as e:
             logger.exception(f"Failed to capture current AI view: {e}")
@@ -706,6 +781,7 @@ class HierarchicalConversationManager:
         # Always capture fresh AI view data after nodes are saved
         # This ensures we see the current state of compressed/recent nodes
         await self._capture_current_ai_view()
+
     async def get_ai_view_data(self) -> Optional[Dict[str, Any]]:
         """Get the AI view data from the JSON file.
 
@@ -726,10 +802,12 @@ class HierarchicalConversationManager:
 
             # Try to read from file first
             conversations_dir = ".conversations"
-            ai_view_file = os.path.join(conversations_dir, f"{self.conversation_id}_ai_view.json")
+            ai_view_file = os.path.join(
+                conversations_dir, f"{self.conversation_id}_ai_view.json"
+            )
 
             if os.path.exists(ai_view_file):
-                with open(ai_view_file, 'r', encoding='utf-8') as f:
+                with open(ai_view_file, "r", encoding="utf-8") as f:
                     stored_data = json.load(f)
                 return stored_data
 
@@ -848,15 +926,11 @@ class HierarchicalConversationManager:
             full_response_text = ""
             usage_info = None
 
-            logger.info(
-                "Starting chat_stream with MCP tools (essential to architecture)"
-            )
-
             # Use proper pydantic-ai streaming with graph iteration
             # MCP tools are essential to the architecture, always use them
-            logger.info("Entering MCP context manager")
+            logger.debug("Entering MCP context manager")
             async with self.work_agent.run_mcp_servers():
-                logger.info("MCP context manager entered, starting graph iteration")
+                logger.debug("MCP context manager entered, starting graph iteration")
 
                 # Use agent.iter() for proper streaming with tool calls
                 async with self.work_agent.iter(user_message) as run:
@@ -864,12 +938,12 @@ class HierarchicalConversationManager:
 
                     async for node in run:
                         if self.work_agent.is_user_prompt_node(node):
-                            logger.info(
+                            logger.debug(
                                 f"UserPromptNode: {getattr(node, 'user_prompt', str(node))}"
                             )
 
                         elif self.work_agent.is_model_request_node(node):
-                            logger.info(
+                            logger.debug(
                                 "ModelRequestNode: streaming partial request tokens"
                             )
                             async with node.stream(run.ctx) as request_stream:
@@ -882,23 +956,23 @@ class HierarchicalConversationManager:
                                         yield content
 
                         elif self.work_agent.is_call_tools_node(node):
-                            logger.info("ToolCallNode: processing tool calls")
+                            logger.debug("ToolCallNode: processing tool calls")
                             async with node.stream(run.ctx) as tool_stream:
                                 async for event in tool_stream:
                                     # Track tool calls and results for memory
                                     self._track_tool_events(event)
 
                         elif self.work_agent.is_end_node(node):
-                            logger.info("EndNode: run completed")
+                            logger.debug("EndNode: run completed")
                             if content_streamed:
-                                logger.info(f"Final result: {run.result.data}")
+                                logger.debug(f"Final result: {run.result.data}")
                             else:
                                 # If no content was streamed, yield the final result
                                 final_result = str(run.result.data)
                                 full_response_text = final_result
                                 yield final_result
                         else:
-                            logger.info(f"Unknown Node: {type(node)}")
+                            logger.debug(f"Unknown Node: {type(node)}")
 
                     # Get usage info from the run
                     usage_info = run.usage()
@@ -938,7 +1012,7 @@ class HierarchicalConversationManager:
             # Ensure AI view data is captured and saved
             await self._ensure_ai_view_captured()
             await self._save_ai_view_data()
-            logger.info("chat_stream completed successfully")
+            logger.debug("chat_stream completed successfully")
 
         except Exception as e:
             logger.exception(f"Error in chat_stream: {e}", exc_info=True)
@@ -1108,7 +1182,7 @@ class HierarchicalConversationManager:
 
             total_processed = compression_results.get("total_processed", 0)
             if total_processed > 0:
-                logger.info(
+                logger.debug(
                     f"Advanced hierarchy compression completed: "
                     f"{compression_results.get('summary_compressed', 0)} summary compressions, "
                     f"{compression_results.get('meta_groups_created', 0)} META groups created, "
@@ -1124,7 +1198,7 @@ class HierarchicalConversationManager:
 
             # Fallback to simple compression if advanced fails
             try:
-                logger.info("Falling back to simple compression system")
+                logger.debug("Falling back to simple compression system")
 
                 # Use the simple compression manager as fallback
                 nodes_to_compress = (
@@ -1150,7 +1224,7 @@ class HierarchicalConversationManager:
                             metadata=result.metadata,
                         )
 
-                    logger.info(
+                    logger.debug(
                         f"Fallback compression completed: {len(compression_results)} nodes"
                     )
 
@@ -1217,11 +1291,11 @@ class HierarchicalConversationManager:
                     "args": getattr(event.part, "args", {}),
                 }
             )
-            logger.info(f"Tracked tool call: {event.part.tool_name}")
+            logger.debug(f"Tracked tool call: {event.part.tool_name}")
 
         elif isinstance(event, FunctionToolCallEvent):
             # Log tool call event - check what attributes are available
-            logger.info(
+            logger.debug(
                 f"Tool call event: {type(event).__name__} - {getattr(event, 'tool_call_id', 'no_id')}"
             )
 
@@ -1236,4 +1310,4 @@ class HierarchicalConversationManager:
                     "result": result_str,
                 }
             )
-            logger.info(f"Tracked tool result: {tool_call_id}")
+            logger.debug(f"Tracked tool result: {tool_call_id}")
