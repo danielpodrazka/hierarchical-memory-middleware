@@ -35,7 +35,6 @@ def mock_config(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-123")
     return Config(
         work_model="claude-sonnet-4",
-        summary_model="claude-sonnet-4",
         db_path=":memory:",
         recent_node_limit=10,
         summary_threshold=20,
@@ -105,7 +104,6 @@ async def test_conversation_manager_with_custom_config(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-123")
     custom_config = Config(
         work_model="claude-3-5-haiku",
-        summary_model="claude-3-5-haiku",
         db_path="/tmp/custom.db",
         recent_node_limit=15,
         summary_threshold=30,

@@ -10,7 +10,6 @@ def test_config_defaults():
     config = Config()
 
     assert config.work_model == "claude-sonnet-4"
-    assert config.summary_model == "claude-sonnet-4"
     assert config.embedding_model == "text-embedding-3-small"
     assert config.db_path == "./conversations.db"
     assert config.recent_node_limit == 10
@@ -56,7 +55,6 @@ def test_from_env_with_environment_variables():
         assert config.enable_mcp_tools is False
         assert config.mcp_port == 9000
         # Test defaults for unset vars
-        assert config.summary_model == "claude-sonnet-4"
 
 
 def test_from_env_or_default_no_env_file():

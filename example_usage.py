@@ -43,7 +43,6 @@ async def demo_conversation_with_moonshot():
         # Create config with Moonshot model
         config = Config(
             work_model="moonshot-v1-128k",
-            summary_model="moonshot-v1-128k",
             db_path="./demo_conversations.db"
         )
         
@@ -89,7 +88,6 @@ async def demo_conversation_with_gemini():
         # Create config with Gemini model
         config = Config(
             work_model="gemini-2-5-flash",
-            summary_model="gemini-2-5-flash",
             db_path="./demo_conversations_gemini.db"
         )
 

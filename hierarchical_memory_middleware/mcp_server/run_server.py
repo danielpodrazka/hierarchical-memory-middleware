@@ -73,7 +73,6 @@ async def main() -> None:
         if args.db_path is not None:
             config.db_path = args.db_path
         config.work_model = args.work_model
-        config.summary_model = args.work_model  # Use same model for now
         config.mcp_port = args.port  # Use the port from command line
 
         logger.info(f"Initializing MCP server with config: {config}")

@@ -20,7 +20,6 @@ def temp_config(monkeypatch):
     config = Config(
         db_path=":memory:",
         work_model="claude-sonnet-4",
-        summary_model="claude-sonnet-4",
         recent_node_limit=5,
     )
 

@@ -410,7 +410,6 @@ from hierarchical_memory_middleware.config import Config
 
 config = Config(
     work_model="claude-sonnet-4",           # Main conversation model
-    summary_model="claude-3-5-haiku",       # Compression model (optional)
     db_path="./conversations.db",           # Database location
     recent_node_limit=10,                   # Nodes kept at FULL level
     mcp_port=8001,                          # MCP server port
@@ -526,7 +525,6 @@ for model_name in ["claude-sonnet-4", "gpt-4o", "gemini-2-5-flash"]:
 # Use different models for different purposes
 config = Config(
     work_model="claude-sonnet-4",      # High-quality main conversations
-    summary_model="claude-3-5-haiku"   # Fast compression tasks
 )
 ```
 
