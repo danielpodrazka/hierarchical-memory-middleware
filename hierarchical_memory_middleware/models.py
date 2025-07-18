@@ -361,23 +361,12 @@ DEFAULT_MODEL_REGISTRY = ModelRegistry(
             cost_per_output_token=0.0006,
             metadata={"family": "gpt-4", "tier": "efficient"},
         ),
-        # Moonshot models
-        "moonshot-v1-8k": ModelConfig(
+        "kimi-k2-0711-preview": ModelConfig(
             provider=ModelProvider.MOONSHOT,
-            model_name="moonshot-v1-8k",
+            model_name="kimi-k2-0711-preview",
             api_key_env="MOONSHOT_API_KEY",
             base_url="https://api.moonshot.ai/v1",
-            context_window=8000,
-            supports_functions=True,
-            default_temperature=0.3,
-            metadata={"family": "moonshot-v1", "tier": "standard"},
-        ),
-        "moonshot-v1-32k": ModelConfig(
-            provider=ModelProvider.MOONSHOT,
-            model_name="moonshot-v1-32k",
-            api_key_env="MOONSHOT_API_KEY",
-            base_url="https://api.moonshot.ai/v1",
-            context_window=32000,
+            context_window=128000,
             supports_functions=True,
             default_temperature=0.3,
             metadata={"family": "moonshot-v1", "tier": "extended"},
