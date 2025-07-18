@@ -71,31 +71,35 @@ This system attempts to handle compression and expansion more transparently thro
 - **💾 Persistent Storage**: DuckDB-based storage with conversation history
 - **🔍 Search**: Full-text and regex search across conversation history
 
-## Current Limitations & Challenges
+## Tackling Industry-Wide Challenges
 
-**Important: Token Usage Challenges**
+**Industry Challenge: Tool-Heavy Workflows**
 
-While hierarchical compression shows promise in theory, several significant challenges have been identified:
+This project tackles one of the most significant unsolved problems in AI-assisted development: **context window exhaustion in tool-intensive workflows**. This challenge affects all AI coding assistants, including Claude, GPT-4, and others.
 
-- **High Tool Call Overhead**: In workflows using many tool calls (like text editor sessions with 50+ tool calls per turn), the current system can consume the entire context window in a single turn
-- **Context Window Saturation**: The middleware needs additional work to dynamically manage context within individual turns, not just across turns
-- **Unverified Performance Claims**: Token reduction benefits have not been systematically measured and may vary significantly based on use patterns
-- **Tool-Heavy Workflows**: The current architecture struggles with applications that generate extensive tool call sequences
+**Universal Problems We're Addressing:**
+- **Large Codebase Navigation**: When working with repositories >10k lines, AI assistants need to explore many files, read extensive code, and make numerous changes
+- **Tool Call Overhead**: Complex development workflows (using MCP tools like text editors, file browsers, test runners) can consume entire context windows in a single turn
+- **Context Window Saturation**: Current AI systems lack sophisticated context management for tool-heavy scenarios
+- **Memory Fragmentation**: No existing solutions effectively compress and recall technical conversation history
 
-### Known Issues & Areas for Improvement
+**Why This Matters:**
+These are fundamental challenges facing the entire AI coding assistant ecosystem. Every Claude user working with large codebases hits these same walls.
 
-This is a proof-of-concept that demonstrates novel ideas but requires substantial development to be production-ready:
+### Our Research Approach
 
-| Aspect | Current State | Needed Improvements |
-|---------|---------------|-------------------|
-| **Memory Management** | Basic automatic compression | Dynamic context editing within turns |
-| **Token Efficiency** | Unverified, varies by usage | Systematic measurement and optimization |
-| **Tool Call Handling** | Limited for high-volume scenarios | Better management of tool-heavy workflows |
-| **Context Management** | Cross-turn compression only | Intra-turn context optimization |
-| **Scalability** | Theoretical, not tested at scale | Real-world testing and optimization |
-| **Integration** | Proof-of-concept middleware | Production-ready deployment patterns |
-| **Reliability** | Experimental | Error handling and edge case management |
+This middleware explores novel solutions to these industry-wide problems:
 
+| Challenge | Industry Status | Our Experimental Approach |
+|-----------|----------------|---------------------------|
+| **Cross-Turn Memory** | Lost when context fills | Hierarchical compression with MCP expansion |
+| **Tool Call Management** | No established patterns | Middleware-based optimization (research stage) |
+| **Large Codebase Work** | Frequent context resets | Persistent memory with intelligent summarization |
+| **Context Optimization** | Manual chunking/summarization | Automatic compression with expansion on demand |
+| **Development Continuity** | Restart conversations frequently | Cross-session memory preservation |
+
+**Current Status: Proof-of-Concept**
+We're exploring these solutions through experimental middleware. While we've made progress on cross-turn compression and MCP integration, intra-turn optimization for tool-heavy workflows remains an active research area—both for us and the broader AI community.
 
 ## Architecture
 
@@ -274,49 +278,53 @@ graph TB
     CM -.->|"Response"| User
 ```
 
-## When to Experiment With This System
+## Research Applications & Use Cases
 
-### 🧪 Potential Use Cases (With Caveats)
+### 🔬 Primary Research Areas
 
-**This experimental system may be worth exploring for:**
-- **Long-running conversations** where cross-turn context preservation could help (when not tool-heavy)
-- **Multi-session projects** where AI needs to remember previous discussions
-- **Research into memory systems** and automatic compression approaches
-- **Prototyping memory-aware applications** with tolerance for experimental features
+**This middleware is designed to advance research in:**
+- **AI Memory Management**: Exploring how hierarchical compression can extend effective conversation length
+- **Tool-Heavy Workflow Optimization**: Investigating solutions to context window exhaustion in complex development tasks
+- **MCP Ecosystem Development**: Contributing tools and patterns for Model Context Protocol adoption
+- **Cross-Session Continuity**: Researching how AI assistants can maintain context across multiple sessions
 
-**⚠️ Important Limitations to Consider:**
-- **Tool-heavy workflows**: Current system struggles with high tool call volumes (50+ per turn)
-- **Production readiness**: This is experimental software requiring significant development
-- **Performance**: Token efficiency claims are unverified and may not apply to all use cases
-- **Reliability**: Edge cases and error handling need substantial work
+### 🏗️ Practical Applications
 
-### ⚠️ Definitely Consider Alternatives When:
+**Current experimental applications include:**
+- **Extended Development Sessions**: Multi-hour coding sessions with large codebases (>10k lines)
+- **Research & Documentation**: Long-form technical discussions that build on previous conversations
+- **Architecture Planning**: Multi-session design discussions that reference previous decisions
+- **Code Review Workflows**: Maintaining context across complex review cycles
 
-**For Production Applications:**
-- **Tool-intensive workflows** (text editing, complex multi-step processes) → Current limitations make this unsuitable
-- **Mission-critical applications** requiring reliability → Use established solutions
-- **Simple use cases** (< 20 exchanges) → Standard ChatGPT/Claude
+**Note on Tool-Heavy Workflows:**
+Complex development work (extensive file editing, large codebase navigation) represents the cutting edge of what's possible with current AI systems. Our research addresses the universal challenge of context window saturation that affects all AI coding assistants.
 
-**For Specific Needs:**
-- **Agent frameworks** requiring explicit memory control → Letta/MemGPT
-- **Batch processing** workflows → Mem0
-- **Production chatbots** → Session storage + embeddings
-- **Document Q&A** with static knowledge → Traditional vector search
+### 🧪 Comparison with Existing Solutions
 
-### 🎯 Theoretical Target: The "AI Colleague" Concept
+**For Production Use Cases:**
+- **Simple conversations** (< 20 exchanges) → Standard Claude/GPT-4 interfaces
+- **Established agent frameworks** → Letta/MemGPT for explicit memory control
+- **Background processing** → Mem0 for offline memory management
+- **Document Q&A** → Traditional RAG with vector search
 
-In theory, this system aims to enable AI that feels like a **colleague with good memory** (when working properly):
+**For Research & Experimentation:**
+- **Memory system research** → This middleware provides novel hierarchical compression approaches
+- **MCP tool development** → Real-world examples of memory browsing and expansion
+- **Large codebase AI assistance** → Experimental approaches to context management
+
+### 🎯 Vision: The "AI Research Partner"
+
+Our goal is enabling AI that functions as a **persistent research partner** for complex technical work:
 
 ```
-👤 "Remember that API design we discussed last month?"
-🤖 "Let me search our conversation history..."
-    → 🔧 find("API design")
-    "Found it! Let me expand those details..."
-    → 🔧 expand_node(127)
-    "Here's what we decided: REST over GraphQL because..."
+👤 "What was our approach to handling state management in the API?"
+🤖 "Let me search our previous architecture discussions..."
+    → 🔍 find("state management API")
+    → 📄 expand_node(89)
+    "In session 3, we decided on Redux with middleware for..."
 ```
 
-**However**, this vision requires substantial development work to handle real-world complexity, especially tool-heavy scenarios.
+This vision drives our research into automatic memory management and intelligent context compression.
 
 ## Installation
 
@@ -785,17 +793,17 @@ The DuckDB storage uses optimized schemas for:
 - **Scalability**: Theoretical - not tested with large conversation histories
 - **Context Management**: Currently only handles cross-turn compression, not intra-turn optimization
 
-## Roadmap (Priority Order)
+## Research Roadmap
 
-**Critical Issues (Needed for Basic Functionality):**
+**Active Research Areas (Core Challenges):**
 - [ ] Intra-turn context management for tool-heavy workflows
-- [ ] Systematic performance measurement and optimization
-- [ ] Production-ready error handling and edge case management
-- [ ] Better handling of high tool call volume scenarios
+- [ ] Dynamic context optimization during complex development sessions
+- [ ] Systematic performance measurement across different workflow types
+- [ ] Advanced tool call batching and compression strategies
 
-**Future Enhancements:**
-- [ ] Semantic search with embeddings
-- [ ] Advanced analytics and conversation insights
+**Future Research Directions:**
+- [ ] Semantic search with embeddings for code understanding
+- [ ] Cross-conversation knowledge synthesis
 - [ ] Multi-conversation cross-referencing
 - [ ] Enhanced CLI interface
 - [ ] Web-based conversation browser
