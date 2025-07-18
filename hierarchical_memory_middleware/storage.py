@@ -691,3 +691,45 @@ class DuckDBStorage:
 
             return self._row_to_single_node(node_result)
 
+    async def remove_node(
+        self,
+        node_id: int,
+        conversation_id: str
+    ) -> bool:
+        """Remove a specific node by composite primary key.
+        
+        Args:
+            node_id: The node ID to remove
+            conversation_id: The conversation ID the node belongs to
+        
+        Returns:
+            True if the node was successfully removed, False if the node was not found
+        """
+        with self._get_connection() as conn:
+            # First check if the node exists
+            check_result = conn.execute(
+                "SELECT COUNT(*) FROM nodes WHERE node_id = ? AND conversation_id = ?",
+                (node_id, conversation_id),
+            ).fetchone()
+            
+            if not check_result or check_result[0] == 0:
+                return False  # Node not found
+            
+            # Remove the node
+            conn.execute(
+                "DELETE FROM nodes WHERE node_id = ? AND conversation_id = ?",
+                (node_id, conversation_id),
+            )
+            
+            # Update conversation stats (decrement total_nodes)
+            conn.execute(
+                """
+                UPDATE conversations
+                SET total_nodes = GREATEST(total_nodes - 1, 0), last_updated = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (conversation_id,),
+            )
+            
+            return True
+

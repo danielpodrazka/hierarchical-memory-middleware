@@ -1584,3 +1584,22 @@ class HierarchicalConversationManager:
         return error_notes.get(
             error_type, f"[Note: Response was interrupted by {error_type}]"
         )
+
+    async def remove_node(self, node_id: int, conversation_id: Optional[str] = None) -> bool:
+        """Remove a specific node from the conversation.
+        
+        Args:
+            node_id: The node ID to remove
+            conversation_id: The conversation ID (optional, uses current conversation if not provided)
+        
+        Returns:
+            True if the node was successfully removed, False if the node was not found
+        """
+        # Use provided conversation_id or current conversation
+        conv_id = conversation_id or self.conversation_id
+        if not conv_id:
+            raise ValueError("No conversation ID provided and no current conversation set")
+        
+        # Delegate to storage layer
+        return await self.storage.remove_node(node_id, conv_id)
+

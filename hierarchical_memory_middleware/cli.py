@@ -410,6 +410,9 @@ async def _chat_session(
         console.print(
             "   [yellow]/stats[/yellow]               - Show detailed statistics"
         )
+        console.print(
+            "   [yellow]/remove_node <node_id>[/yellow] - Remove a node (with confirmation)"
+        )
         console.print("   [yellow]/help[/yellow]                - Show this help")
         console.print(
             "   [yellow]/quit[/yellow] or [yellow]/exit[/yellow]        - Exit chat"
@@ -533,6 +536,9 @@ async def handle_chat_command(command: str, manager, conv_id: str, export_dir: s
             "   [yellow]/stats[/yellow]               - Show detailed statistics"
         )
         console.print(
+            "   [yellow]/remove_node <node_id>[/yellow] - Remove a node (with confirmation)"
+        )
+        console.print(
             "   [yellow]/rename <new_name>[/yellow]        - Rename current conversation"
         )
         console.print(
@@ -599,6 +605,16 @@ async def handle_chat_command(command: str, manager, conv_id: str, export_dir: s
                 console.print(f"[red]❌ Error renaming conversation: {e}[/red]")
         else:
             console.print("[red]❌ Usage: /rename <n>[/red]")
+
+    elif cmd == "/remove_node":
+        if args:
+            try:
+                node_id = int(args)
+                await remove_node_from_chat(manager, node_id, conv_id)
+            except ValueError:
+                console.print("[red]❌ Invalid node_id. Please provide a number.[/red]")
+        else:
+            console.print("[red]❌ Usage: /remove_node <node_id>[/red]")
 
     else:
         console.print(
@@ -694,6 +710,52 @@ async def expand_node(manager, node_id: int, conv_id: str):
     except Exception as e:
         console.print(f"[red]❌ Error expanding node {node_id}: {e}[/red]")
 
+
+async def remove_node_from_chat(manager, node_id: int, conv_id: str):
+    """Remove a node from the conversation with confirmation (for chat session)."""
+    try:
+        # Get node details first for confirmation
+        node_details = await manager.get_node_details(node_id, conv_id)
+        if not node_details:
+            console.print(
+                f"[red]❌ Node {node_id} not found in conversation.[/red]"
+            )
+            return
+
+        # Show node details
+        node_type_icon = "👤" if node_details['node_type'] == "user" else "🤖"
+        content_preview = node_details['content'][:100] + "..." if len(node_details['content']) > 100 else node_details['content']
+        
+        console.print(f"\n[yellow]📄 Node {node_id} Details:[/yellow]")
+        console.print(f"Type: {node_type_icon} {node_details['node_type']}")
+        console.print(f"Timestamp: {node_details['timestamp']}")
+        console.print(f"Level: {node_details['level']}")
+        console.print(f"Content Preview: {content_preview}")
+
+        # Ask for confirmation
+        console.print(f"\n[red]⚠️  WARNING: This will permanently delete node {node_id} from the conversation.[/red]")
+        response = typer.prompt(
+            "Are you sure you want to remove this node? (yes/no)",
+            type=str
+        )
+        if response.lower() not in ["yes", "y"]:
+            console.print("[yellow]Operation cancelled.[/yellow]")
+            return
+
+        # Remove the node
+        success = await manager.remove_node(node_id, conv_id)
+        
+        if success:
+            console.print(
+                f"[green]✅ Successfully removed node {node_id} from conversation.[/green]"
+            )
+        else:
+            console.print(
+                f"[red]❌ Failed to remove node {node_id}. Node may not exist.[/red]"
+            )
+
+    except Exception as e:
+        console.print(f"[red]❌ Error removing node {node_id}: {e}[/red]")
 
 async def show_recent_messages(manager, limit: int = 10):
     """Show recent conversation messages."""
@@ -1041,6 +1103,92 @@ async def _expand_node(
     except Exception as e:
         console.print(f"[red]❌ Error: {e}[/red]")
 
+
+@app.command()
+def remove_node(
+    conversation_id: str = typer.Argument(help="Conversation ID"),
+    idx: int = typer.Argument(help="Node ID to remove"),
+    db_path: Optional[str] = typer.Option(
+        None, "--db-path", "-d", help="Database path"
+    ),
+    mcp_port: Optional[int] = typer.Option(None, "--mcp-port", help="MCP server port"),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Skip confirmation prompt"
+    ),
+):
+    """Remove a specific node from a conversation."""
+    asyncio.run(_remove_node(conversation_id, idx, db_path, mcp_port, force))
+
+
+async def _remove_node(
+    conversation_id: str,
+    node_id: int,
+    db_path: Optional[str],
+    mcp_port: Optional[int],
+    force: bool,
+):
+    """Remove node implementation."""
+    config = Config.from_env()
+    if db_path:
+        config.db_path = db_path
+    if mcp_port:
+        config.mcp_port = mcp_port
+
+    try:
+        # Resolve the conversation ID
+        full_conversation_id = await resolve_conversation_identifier(
+            conversation_id, config.db_path
+        )
+
+        # Initialize manager
+        mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
+        manager = HierarchicalConversationManager(
+            config, mcp_server_url=mcp_server_url
+        )
+
+        # Get node details first for confirmation
+        node_details = await manager.get_node_details(node_id, full_conversation_id)
+        if not node_details:
+            console.print(
+                f"[red]❌ Node {node_id} not found in conversation {full_conversation_id[:8]}...[/red]"
+            )
+            return
+
+        # Show node details
+        node_type_icon = "👤" if node_details['node_type'] == "user" else "🤖"
+        content_preview = node_details['content'][:100] + "..." if len(node_details['content']) > 100 else node_details['content']
+        
+        console.print(f"\n[yellow]📄 Node {node_id} Details:[/yellow]")
+        console.print(f"Type: {node_type_icon} {node_details['node_type']}")
+        console.print(f"Timestamp: {node_details['timestamp']}")
+        console.print(f"Level: {node_details['level']}")
+        console.print(f"Content Preview: {content_preview}")
+
+        # Confirmation unless --force is used
+        if not force:
+            console.print(f"\n[red]⚠️  WARNING: This will permanently delete node {node_id} from the conversation.[/red]")
+            response = typer.prompt(
+                "Are you sure you want to remove this node? (yes/no)",
+                type=str
+            )
+            if response.lower() not in ["yes", "y"]:
+                console.print("[yellow]Operation cancelled.[/yellow]")
+                return
+
+        # Remove the node
+        success = await manager.remove_node(node_id, full_conversation_id)
+        
+        if success:
+            console.print(
+                f"[green]✅ Successfully removed node {node_id} from conversation {full_conversation_id[:8]}...[/green]"
+            )
+        else:
+            console.print(
+                f"[red]❌ Failed to remove node {node_id}. Node may not exist.[/red]"
+            )
+
+    except Exception as e:
+        console.print(f"[red]❌ Error: {e}[/red]")
 
 @app.command()
 def search(
