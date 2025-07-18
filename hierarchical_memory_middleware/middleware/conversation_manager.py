@@ -6,6 +6,10 @@ import uuid
 import logging
 from typing import Optional, List, Dict, Any
 
+
+import httpx
+import httpcore
+
 from pydantic_ai import Agent, usage
 from pydantic_ai.messages import (
     ModelMessage,
@@ -85,7 +89,9 @@ class HierarchicalConversationManager:
             memory_server = MCPServerStreamableHTTP(
                 url=mcp_server_url,
                 tool_prefix="memory",
-                process_tool_call=self._log_tool_call if config.log_tool_calls else None,
+                process_tool_call=self._log_tool_call
+                if config.log_tool_calls
+                else None,
             )
             mcp_servers.append(memory_server)
 
@@ -93,7 +99,9 @@ class HierarchicalConversationManager:
         if external_mcp_servers:
             for server in external_mcp_servers:
                 # Set log_tool_call attribute on each external server
-                server.process_tool_call = self._log_tool_call if config.log_tool_calls else None
+                server.process_tool_call = (
+                    self._log_tool_call if config.log_tool_calls else None
+                )
                 mcp_servers.append(server)
 
         # Create agent with model manager
@@ -941,8 +949,12 @@ class HierarchicalConversationManager:
                 logger.debug("MCP context manager entered, starting graph iteration")
 
                 # Use agent.iter() for proper streaming with tool calls
-                custom_limits = usage.UsageLimits(request_limit=self.config.request_limit)
-                async with self.work_agent.iter(user_message, usage_limits=custom_limits) as run:
+                custom_limits = usage.UsageLimits(
+                    request_limit=self.config.request_limit
+                )
+                async with self.work_agent.iter(
+                    user_message, usage_limits=custom_limits
+                ) as run:
                     content_streamed = False
 
                     async for node in run:
@@ -1024,6 +1036,84 @@ class HierarchicalConversationManager:
             logger.debug("chat_stream completed successfully")
 
         except Exception as e:
+            # Check if we have partial response content to save
+            has_partial_content = bool(full_response_text.strip())
+
+            if has_partial_content:
+                # Determine error type for better messaging
+                error_type = self._categorize_streaming_error(e)
+
+                logger.warning(
+                    f"Streaming failed ({error_type}), but saving partial response ({len(full_response_text)} chars): {str(e)[:200]}..."
+                )
+
+                # Save the user message first if we haven't yet
+                try:
+                    user_node = await self.storage.save_conversation_node(
+                        conversation_id=self.conversation_id,
+                        node_type=NodeType.USER,
+                        content=user_message,
+                    )
+                except Exception as save_error:
+                    logger.warning(
+                        f"Failed to save user message during streaming failure recovery: {save_error}"
+                    )
+
+                # Save the partial AI response with appropriate error note
+                try:
+                    error_note = self._get_error_note(error_type)
+                    partial_content = f"{full_response_text}\n\n{error_note}"
+
+                    ai_node = await self.storage.save_conversation_node(
+                        conversation_id=self.conversation_id,
+                        node_type=NodeType.AI,
+                        content=partial_content,
+                        tokens_used=None,  # Unknown due to interruption
+                        ai_components={
+                            "assistant_text": partial_content,
+                            "model_used": self.config.work_model,
+                            "tool_calls": self._current_tool_calls,
+                            "tool_results": self._current_tool_results,
+                            "interrupted_by_streaming_failure": True,
+                            "error_type": error_type,
+                            "original_error": str(e)[:500],  # Truncated error
+                        },
+                    )
+
+                    logger.info(
+                        f"Successfully saved partial response after {error_type}. Response length: {len(full_response_text)} characters"
+                    )
+
+                    # Try to run compression and AI view capture, but don't fail if they error
+                    try:
+                        await self._check_and_compress()
+                        await self._ensure_ai_view_captured()
+                        await self._save_ai_view_data()
+                    except Exception as cleanup_error:
+                        logger.debug(
+                            f"Cleanup operations failed after streaming failure (non-critical): {cleanup_error}"
+                        )
+
+                    # Return early - don't re-raise the streaming exception
+                    logger.info(
+                        f"{error_type} handled gracefully, conversation can continue from partial response"
+                    )
+                    return
+
+                except Exception as save_error:
+                    logger.error(
+                        f"Failed to save partial response during streaming failure recovery: {save_error}"
+                    )
+                    # Fall through to re-raise original exception
+
+            else:
+                # No partial content to save
+                error_type = self._categorize_streaming_error(e)
+                logger.warning(
+                    f"Streaming failed ({error_type}) with no partial response to save: {str(e)[:200]}..."
+                )
+
+            # For cases where we couldn't save partial content, re-raise the original exception
             logger.exception(f"Error in chat_stream: {e}", exc_info=True)
             raise
 
@@ -1041,8 +1131,12 @@ class HierarchicalConversationManager:
             # The history processor will automatically manage conversation memory
             # MCP tools are essential to the architecture, always use them
             async with self.work_agent.run_mcp_servers():
-                custom_limits = usage.UsageLimits(request_limit=self.config.request_limit)
-                response = await self.work_agent.run(user_prompt=user_message, usage_limits=custom_limits)
+                custom_limits = usage.UsageLimits(
+                    request_limit=self.config.request_limit
+                )
+                response = await self.work_agent.run(
+                    user_prompt=user_message, usage_limits=custom_limits
+                )
 
             # Save the user message as a node
             user_node = await self.storage.save_conversation_node(
@@ -1321,3 +1415,172 @@ class HierarchicalConversationManager:
                 }
             )
             logger.debug(f"Tracked tool result: {tool_call_id}")
+
+    def _categorize_streaming_error(self, exception: Exception) -> str:
+        """Categorize a streaming exception into a more specific error type."""
+        exception_str = str(exception).lower()
+
+        # Check for specific exception types and error patterns
+        current_exception = exception
+        while current_exception:
+            # Timeout-related errors
+            if self._is_timeout_error(current_exception, exception_str):
+                return "timeout"
+
+            # Rate limiting / quota errors
+            if self._is_rate_limit_error(current_exception, exception_str):
+                return "rate_limit"
+
+            # Server overload errors
+            if self._is_server_overload_error(current_exception, exception_str):
+                return "server_overload"
+
+            # Context/length limit errors
+            if self._is_context_limit_error(current_exception, exception_str):
+                return "context_limit"
+
+            # Authentication errors
+            if self._is_auth_error(current_exception, exception_str):
+                return "auth_error"
+
+            # Network/connection errors
+            if self._is_network_error(current_exception, exception_str):
+                return "network_error"
+
+            # Check the exception chain
+            current_exception = getattr(current_exception, "__cause__", None)
+            if not current_exception:
+                current_exception = getattr(exception, "__context__", None)
+                break
+
+        # Default fallback
+        return "unknown_error"
+
+    def _is_timeout_error(self, exception: Exception, exception_str: str) -> bool:
+        """Check if exception is timeout-related."""
+        # Check for specific timeout exception types
+        timeout_exceptions = []
+
+        if httpx:
+            timeout_exceptions.extend(
+                [
+                    httpx.ReadTimeout,
+                    httpx.WriteTimeout,
+                    httpx.ConnectTimeout,
+                    httpx.PoolTimeout,
+                    httpx.TimeoutException,
+                ]
+            )
+
+        if httpcore:
+            timeout_exceptions.extend(
+                [
+                    httpcore.ReadTimeout,
+                    httpcore.WriteTimeout,
+                    httpcore.ConnectTimeout,
+                    httpcore.PoolTimeout,
+                ]
+            )
+
+        timeout_exceptions.append(asyncio.TimeoutError)
+
+        # Check exception type
+        if any(isinstance(exception, t) for t in timeout_exceptions):
+            return True
+
+        # Check error message
+        timeout_keywords = ["timeout", "timed out", "read timeout", "write timeout"]
+        return any(keyword in exception_str for keyword in timeout_keywords)
+
+    def _is_rate_limit_error(self, exception: Exception, exception_str: str) -> bool:
+        """Check if exception is rate limiting related."""
+        rate_limit_keywords = [
+            "rate limit",
+            "quota",
+            "credits",
+            "billing",
+            "usage limit",
+            "requests per",
+            "too many requests",
+            "quota exceeded",
+            "insufficient credits",
+            "rate exceeded",
+        ]
+        return any(keyword in exception_str for keyword in rate_limit_keywords)
+
+    def _is_server_overload_error(
+        self, exception: Exception, exception_str: str
+    ) -> bool:
+        """Check if exception is server overload related."""
+        overload_keywords = [
+            "overloaded",
+            "capacity",
+            "unavailable",
+            "503",
+            "502",
+            "500",
+            "server error",
+            "internal error",
+            "service unavailable",
+            "temporarily unavailable",
+            "high demand",
+        ]
+        return any(keyword in exception_str for keyword in overload_keywords)
+
+    def _is_context_limit_error(self, exception: Exception, exception_str: str) -> bool:
+        """Check if exception is context length related."""
+        context_keywords = [
+            "context",
+            "token limit",
+            "maximum context",
+            "context window",
+            "context length",
+            "token count",
+            "input too long",
+            "sequence length",
+        ]
+        return any(keyword in exception_str for keyword in context_keywords)
+
+    def _is_auth_error(self, exception: Exception, exception_str: str) -> bool:
+        """Check if exception is authentication related."""
+        auth_keywords = [
+            "authentication",
+            "unauthorized",
+            "401",
+            "403",
+            "api key",
+            "invalid key",
+            "permission",
+            "access denied",
+            "forbidden",
+        ]
+        return any(keyword in exception_str for keyword in auth_keywords)
+
+    def _is_network_error(self, exception: Exception, exception_str: str) -> bool:
+        """Check if exception is network related."""
+        network_keywords = [
+            "connection",
+            "network",
+            "dns",
+            "resolve",
+            "unreachable",
+            "connection refused",
+            "connection failed",
+            "no route",
+        ]
+        return any(keyword in exception_str for keyword in network_keywords)
+
+    def _get_error_note(self, error_type: str) -> str:
+        """Get an appropriate note to append to partial responses based on error type."""
+        error_notes = {
+            "timeout": "[Note: Response was interrupted by a network timeout]",
+            "rate_limit": "[Note: Response was interrupted due to rate limiting or quota exceeded]",
+            "server_overload": "[Note: Response was interrupted due to server overload]",
+            "context_limit": "[Note: Response was interrupted due to context length limits]",
+            "auth_error": "[Note: Response was interrupted due to authentication issues]",
+            "network_error": "[Note: Response was interrupted due to network connectivity issues]",
+            "unknown_error": "[Note: Response was interrupted by an unexpected error]",
+        }
+        return error_notes.get(
+            error_type, f"[Note: Response was interrupted by {error_type}]"
+        )
