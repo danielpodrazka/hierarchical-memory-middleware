@@ -330,7 +330,7 @@ This vision drives our research into automatic memory management and intelligent
 
 ```bash
 # Clone the repository
-git clone https://github.com/daniel/hierarchical-memory-middleware
+git clone https://github.com/danielpodrazka/hierarchical-memory-middleware
 cd hierarchical-memory-middleware
 
 # Install with uv (recommended)
@@ -710,7 +710,7 @@ asyncio.run(conversation_with_external_tools())
 
 ```bash
 # Clone and setup
-git clone https://github.com/daniel/hierarchical-memory-middleware
+git clone https://github.com/danielpodrazka/hierarchical-memory-middleware
 cd hierarchical-memory-middleware
 uv sync --dev
 
@@ -810,9 +810,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Support
 
-- **Documentation**: [GitHub Wiki](https://github.com/daniel/hierarchical-memory-middleware/wiki)
-- **Issues**: [GitHub Issues](https://github.com/daniel/hierarchical-memory-middleware/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/daniel/hierarchical-memory-middleware/discussions)
+- **Documentation**: [GitHub Wiki](https://github.com/danielpodrazka/hierarchical-memory-middleware/wiki)
+- **Issues**: [GitHub Issues](https://github.com/danielpodrazka/hierarchical-memory-middleware/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/danielpodrazka/hierarchical-memory-middleware/discussions)
 
 ---
 
@@ -847,13 +847,13 @@ If you use this work in your research, please cite it as:
   author = {Podr\k{a}\k{z}ka, Daniel},
   title = {Hierarchical Memory Middleware: Exploring Automatic Compression for AI Conversations},
   year = {2025},
-  url = {https://github.com/daniel/hierarchical-memory-middleware},
+  url = {https://github.com/danielpodrazka/hierarchical-memory-middleware},
   note = {Research prototype for investigating memory management in AI systems}
 }
 ```
 
 **Plain text citation:**
-Podrażka, D. (2025). Hierarchical Memory Middleware: Exploring Automatic Compression for AI Conversations. Retrieved from https://github.com/daniel/hierarchical-memory-middleware
+Podrażka, D. (2025). Hierarchical Memory Middleware: Exploring Automatic Compression for AI Conversations. Retrieved from https://github.com/danielpodrazka/hierarchical-memory-middleware
 
 ## License
 
