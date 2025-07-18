@@ -560,29 +560,8 @@ Provides conversation overview including:
 
 ## Supported Models
 
-### Anthropic Claude
-- `claude-sonnet-4` - Latest high-performance model
-- `claude-3-5-haiku` - Fast and efficient
+Generally can be extended to any model that supports tool calling. For more instructions and current state, have a look at `MODEL_MANAGER_README.md` and `DEFAULT_MODEL_REGISTRY` in `hierarchical_memory_middleware/models.py`. 
 
-### OpenAI
-- `gpt-4o` - Advanced reasoning and tool use
-- `gpt-4o-mini` - Cost-effective alternative
-
-### Google Gemini
-- `gemini-2-5-pro` - Advanced multimodal with thinking
-- `gemini-2-5-flash` - Fast multimodal with thinking
-- `gemini-2-0-flash` - Latest fast model
-- `gemini-1-5-pro` - Proven multimodal capabilities
-- `gemini-1-5-flash` - Efficient multimodal
-
-### Moonshot AI
-- `moonshot-v1-128k` - Long context Chinese/English
-- `moonshot-v1-32k` - Standard context
-- `moonshot-v1-8k` - Efficient option
-
-### DeepSeek
-- `deepseek-chat` - General conversation
-- `deepseek-coder` - Code-specialized
 
 ## Configuration Options
 
@@ -614,13 +593,22 @@ The middleware supports automatic management of external MCP servers through the
 ### Configuration
 
 Create a configuration file at `~/.config/hierarchical_memory_middleware/mcp_servers.json`:
-
+(the text-editor example is my personal config, the rest of the example servers are AI-generated)
 ```json
 {
   "text-editor": {
-    "command": "npx",
-    "args": ["@modelcontextprotocol/server-text-editor"],
-    "env": {},
+    "command": "/home/daniel/pp/venvs/mcp-text-editor/bin/python",
+    "args": [
+      "/home/daniel/pp/mcp-text-editor/src/text_editor/server.py",
+      "--transport", "streamable-http",
+      "--port", "8001"
+    ],
+    "env": {
+      "SKIM_MAX_LINES": "200",
+      "MAX_SELECT_LINES": "100",
+      "PYTHON_VENV": "/home/daniel/pp/venvs/llm-memory-middleware/bin/python",
+      "PYTHONPATH": "/home/daniel/pp/llm-memory-middleware"
+    },
     "port": 8002,
     "tool_prefix": "text-editor",
     "enabled": true
@@ -849,6 +837,27 @@ Hierarchical Memory Middleware is a **proof-of-concept exploring novel approache
 **Interested in Contributing?**
 
 This project represents early-stage research into automatic AI memory systems. If you're interested in exploring these concepts or contributing to development, check out the [installation](#installation) instructions to try the current prototype.
+
+## Citation
+
+If you use this work in your research, please cite it as:
+
+```bibtex
+@software{podrazka2025hierarchical,
+  author = {Podr\k{a}\k{z}ka, Daniel},
+  title = {Hierarchical Memory Middleware: Exploring Automatic Compression for AI Conversations},
+  year = {2025},
+  url = {https://github.com/daniel/hierarchical-memory-middleware},
+  note = {Research prototype for investigating memory management in AI systems}
+}
+```
+
+**Plain text citation:**
+Podrażka, D. (2025). Hierarchical Memory Middleware: Exploring Automatic Compression for AI Conversations. Retrieved from https://github.com/daniel/hierarchical-memory-middleware
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 

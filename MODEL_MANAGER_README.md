@@ -13,8 +13,7 @@ To use Moonshot models, follow these steps:
 
 2. **Update your model configuration** in `.env`:
    ```bash
-   WORK_MODEL=moonshot-v1-128k
-   SUMMARY_MODEL=moonshot-v1-128k
+   WORK_MODEL=kimi-k2-0711-preview
    ```
 
 3. **Use it in your code** - no changes needed!
@@ -37,17 +36,9 @@ To use Moonshot models, follow these steps:
 - **API Key**: `OPENAI_API_KEY`
 
 ### Moonshot (Kimi)
-- `moonshot-v1-8k` (8k context)
-- `moonshot-v1-32k` (32k context)
-- `moonshot-v1-128k` (128k context)
+- `kimi-k2-0711-preview` (128k context)
 - **API Key**: `MOONSHOT_API_KEY`
 - **Base URL**: `https://api.moonshot.ai/v1`
-
-### Together AI
-- `llama-3-8b-instruct`
-- `llama-3-70b-instruct`
-- **API Key**: `TOGETHER_API_KEY`
-- **Base URL**: `https://api.together.xyz/v1`
 
 ### DeepSeek
 - `deepseek-chat`
@@ -60,8 +51,7 @@ To use Moonshot models, follow these steps:
 ### Moonshot Configuration
 ```bash
 # .env file
-WORK_MODEL=moonshot-v1-128k
-SUMMARY_MODEL=moonshot-v1-128k
+WORK_MODEL=kimi-k2-0711-preview
 MOONSHOT_API_KEY=your_moonshot_api_key
 ```
 
@@ -69,7 +59,6 @@ MOONSHOT_API_KEY=your_moonshot_api_key
 ```bash
 # Use Claude for main work, GPT-4o-mini for summaries
 WORK_MODEL=claude-sonnet-4
-SUMMARY_MODEL=gpt-4o-mini
 ANTHROPIC_API_KEY=your_claude_key
 OPENAI_API_KEY=your_openai_key
 ```
@@ -77,7 +66,6 @@ OPENAI_API_KEY=your_openai_key
 ### DeepSeek for Coding
 ```bash
 WORK_MODEL=deepseek-coder
-SUMMARY_MODEL=deepseek-chat
 DEEPSEEK_API_KEY=your_deepseek_key
 ```
 
@@ -89,7 +77,7 @@ from hierarchical_memory_middleware.config import Config
 from hierarchical_memory_middleware.middleware.conversation_manager import HierarchicalConversationManager
 
 # Simple - just specify the model name
-config = Config(work_model="moonshot-v1-128k")
+config = Config(work_model="kimi-k2-0711-preview")
 manager = HierarchicalConversationManager(config)
 
 # Everything else works the same!
@@ -103,10 +91,10 @@ from hierarchical_memory_middleware.model_manager import ModelManager
 
 # List all available models
 models = ModelManager.list_available_models()
-print(models)  # {'moonshot-v1-128k': 'moonshot', 'claude-sonnet-4': 'anthropic', ...}
+print(models)  # {'kimi-k2-0711-preview': 'moonshot', 'claude-sonnet-4': 'anthropic', ...}
 
 # Check if you have the required API keys
-if ModelManager.validate_model_access("moonshot-v1-128k"):
+if ModelManager.validate_model_access("kimi-k2-0711-preview"):
     print("✅ Moonshot is ready to use!")
 else:
     print("❌ Please set MOONSHOT_API_KEY")
@@ -120,7 +108,7 @@ for model, key_name in missing.items():
 ### Create Models Directly
 ```python
 # Create a model instance directly
-model = ModelManager.create_model("moonshot-v1-128k", temperature=0.5)
+model = ModelManager.create_model("kimi-k2-0711-preview", temperature=0.5)
 
 # Use with PydanticAI Agent
 from pydantic_ai import Agent
@@ -182,7 +170,7 @@ print("Missing API keys:", ModelManager.get_missing_api_keys())
 
 # Test a specific model
 try:
-    model = ModelManager.create_model("moonshot-v1-128k")
+    model = ModelManager.create_model("kimi-k2-0711-preview")
     print("✅ Model created successfully!")
 except Exception as e:
     print(f"❌ Error: {e}")
