@@ -1,6 +1,7 @@
 """Compression logic with TF-IDF topic extraction for Phase 5 implementation."""
 
 import re
+import logging
 from typing import Dict, Any, List, Optional
 from collections import Counter
 
@@ -9,6 +10,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
 from .models import ConversationNode, CompressionLevel, CompressionResult
+
+
+logger = logging.getLogger(__name__)
 
 
 class TfidfTopicExtractor:
@@ -270,18 +274,28 @@ class CompressionManager:
         ]
 
     def compress_nodes(self, nodes: List[ConversationNode], all_nodes: Optional[List[ConversationNode]] = None) -> List[CompressionResult]:
-        """Compress a list of nodes with TF-IDF corpus training."""
+        """Compress a list of nodes with TF-IDF corpus training and proper error handling."""
         # Use all_nodes for corpus training, or fall back to the nodes being compressed
         corpus_nodes = all_nodes or nodes
-        
+
         # Ensure TF-IDF corpus is trained
-        self.compressor.ensure_corpus_fitted(corpus_nodes)
-        
+        try:
+            self.compressor.ensure_corpus_fitted(corpus_nodes)
+        except Exception as e:
+            logger.error(f"Error ensuring corpus fitted: {e}")
+            # Continue with unfitted corpus - fallback will be used
+
         results = []
         for node in nodes:
-            if self.compressor.should_compress(node, len(nodes)):
-                result = self.compressor.compress_node(node)
-                results.append(result)
+            try:
+                if self.compressor.should_compress(node, len(nodes)):
+                    result = self.compressor.compress_node(node)
+                    results.append(result)
+            except Exception as e:
+                logger.error(f"Error compressing node {node.node_id}: {e}")
+                # Continue processing other nodes
+                continue
+        
         return results
 
 

@@ -295,11 +295,11 @@ class DuckDBStorage:
                 LIMIT ?
             """
             params = [
-                conversation_id, 
-                CompressionLevel.SUMMARY.value, 
+                conversation_id,
+                CompressionLevel.SUMMARY.value,
                 CompressionLevel.META.value,
                 CompressionLevel.ARCHIVE.value,
-                limit
+                limit,
             ]
 
             result = conn.execute(query, params)
@@ -433,15 +433,17 @@ class DuckDBStorage:
 
             conversations = []
             for row in result:
-                conversations.append({
-                    "id": row[0],
-                    "name": row[1],
-                    "node_count": row[2],
-                    "created": row[3].isoformat() if row[3] else None,
-                    "last_updated": row[4].isoformat() if row[4] else None,
-                    "is_active": bool(row[5])
-                })
-            
+                conversations.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "node_count": row[2],
+                        "created": row[3].isoformat() if row[3] else None,
+                        "last_updated": row[4].isoformat() if row[4] else None,
+                        "is_active": bool(row[5]),
+                    }
+                )
+
             return conversations
 
     async def set_conversation_name(self, conversation_id: str, name: str) -> bool:
@@ -518,22 +520,31 @@ class DuckDBStorage:
         # Only enhance nodes that have been compressed (not FULL level) and have a summary
         if node.level == CompressionLevel.SUMMARY and node.summary:
             # Build enhanced summary with line count
-            enhanced_summary = f"ID {node.node_id}: {node.summary} ({node.line_count} lines)"
+            enhanced_summary = (
+                f"ID {node.node_id}: {node.summary} ({node.line_count} lines)"
+            )
 
             # Add TF-IDF topics if available
             # Ensure topics is a list and not None
             if node.topics and isinstance(node.topics, list) and len(node.topics) > 0:
                 try:
                     # Filter out empty strings and None values
-                    valid_topics = [topic for topic in node.topics if topic and isinstance(topic, str)]
+                    valid_topics = [
+                        topic
+                        for topic in node.topics
+                        if topic and isinstance(topic, str)
+                    ]
                     if valid_topics:
                         topics_str = ", ".join(valid_topics[:3])  # Show top 3 topics
                         enhanced_summary += f" [Topics: {topics_str}]"
                 except Exception as e:
                     # Log the error but don't break the summary enhancement
                     import logging
+
                     logger = logging.getLogger(__name__)
-                    logger.debug(f"Error processing topics for node {node.node_id}: {e}")
+                    logger.debug(
+                        f"Error processing topics for node {node.node_id}: {e}"
+                    )
 
             # Create a new node with the enhanced summary
             node_dict = node.model_dump()
@@ -542,10 +553,7 @@ class DuckDBStorage:
         return node
 
     async def get_nodes_in_range(
-        self, 
-        conversation_id: str, 
-        start_node_id: int, 
-        end_node_id: int
+        self, conversation_id: str, start_node_id: int, end_node_id: int
     ) -> List[ConversationNode]:
         """Get nodes within a specific ID range for a conversation."""
         with self._get_connection() as conn:
@@ -569,19 +577,20 @@ class DuckDBStorage:
         self,
         conversation_id: str,
         meta_group,  # MetaGroup object
-        grouped_node_ids: List[int]
+        grouped_node_ids: List[int],
     ) -> ConversationNode:
         """Create a META-level node that represents a group of SUMMARY nodes."""
         from datetime import datetime
         import json
 
-        # Create clear, actionable content for the META node
-        topics_info = f" Topics: {', '.join(meta_group.main_topics[:3])}" if meta_group.main_topics else ""
-        
+        all_topics_str = (
+            ", ".join(meta_group.main_topics) if meta_group.main_topics else ""
+        )
+        topics_section = f" [Topics: {all_topics_str}]" if all_topics_str else ""
+
         meta_content = (
-            f"META GROUP containing nodes {meta_group.start_node_id}-{meta_group.end_node_id} "
-            f"({meta_group.node_count} nodes, {meta_group.total_lines} lines).{topics_info}\n"
-            f"To expand this group, use expand_node() with any node ID from {meta_group.start_node_id} to {meta_group.end_node_id}."
+            f"Nodes {meta_group.start_node_id}-{meta_group.end_node_id}:"
+            f"({meta_group.node_count} nodes, {meta_group.total_lines} lines){topics_section}\n"
         )
 
         # Create summary for storage (not displayed to AI)
@@ -602,12 +611,12 @@ class DuckDBStorage:
                 "main_topics": meta_group.main_topics,
                 "timestamp_range": [
                     meta_group.timestamp_range[0].isoformat(),
-                    meta_group.timestamp_range[1].isoformat()
-                ]
+                    meta_group.timestamp_range[1].isoformat(),
+                ],
             },
             "grouped_node_ids": grouped_node_ids,
             "compression_level": "META",
-            "is_group_node": True
+            "is_group_node": True,
         }
 
         # Ensure conversation exists
@@ -650,7 +659,9 @@ class DuckDBStorage:
                     CompressionLevel.META.value,
                     meta_summary,
                     json.dumps(meta_metadata),
-                    json.dumps(meta_group.main_topics) if meta_group.main_topics else None,
+                    json.dumps(meta_group.main_topics)
+                    if meta_group.main_topics
+                    else None,
                 ),
             )
 
@@ -662,7 +673,12 @@ class DuckDBStorage:
                     SET parent_summary_node_id = ?, level = ?
                     WHERE node_id = ? AND conversation_id = ?
                     """,
-                    (node_id, CompressionLevel.META.value, grouped_node_id, conversation_id),
+                    (
+                        node_id,
+                        CompressionLevel.META.value,
+                        grouped_node_id,
+                        conversation_id,
+                    ),
                 )
 
             # Update conversation stats
@@ -691,17 +707,13 @@ class DuckDBStorage:
 
             return self._row_to_single_node(node_result)
 
-    async def remove_node(
-        self,
-        node_id: int,
-        conversation_id: str
-    ) -> bool:
+    async def remove_node(self, node_id: int, conversation_id: str) -> bool:
         """Remove a specific node by composite primary key.
-        
+
         Args:
             node_id: The node ID to remove
             conversation_id: The conversation ID the node belongs to
-        
+
         Returns:
             True if the node was successfully removed, False if the node was not found
         """
@@ -711,16 +723,16 @@ class DuckDBStorage:
                 "SELECT COUNT(*) FROM nodes WHERE node_id = ? AND conversation_id = ?",
                 (node_id, conversation_id),
             ).fetchone()
-            
+
             if not check_result or check_result[0] == 0:
                 return False  # Node not found
-            
+
             # Remove the node
             conn.execute(
                 "DELETE FROM nodes WHERE node_id = ? AND conversation_id = ?",
                 (node_id, conversation_id),
             )
-            
+
             # Update conversation stats (decrement total_nodes)
             conn.execute(
                 """
@@ -730,6 +742,5 @@ class DuckDBStorage:
                 """,
                 (conversation_id,),
             )
-            
-            return True
 
+            return True
