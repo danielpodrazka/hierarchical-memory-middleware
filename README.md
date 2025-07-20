@@ -261,7 +261,7 @@ graph TB
     end
 
     subgraph "Storage Layer"
-        DB["🗄️ DuckDB<br/>• Conversation nodes<br/>• Compression levels<br/>• Embeddings<br/>• Metadata"]
+        DB["🗄️ DuckDB<br/>• Conversation nodes<br/>• Compression levels<br/>• Metadata"]
     end
 
     subgraph "MCP Memory Tools"
@@ -270,12 +270,12 @@ graph TB
 
     User -.->|"Chat message"| CM
     CM -->|"Prepare context"| DB
-    CM -->|"Generate response"| Work
+    CM -->|"Generate request"| Work
     Work <-->|"MCP calls during response"| MCP
     MCP <--> DB
     CM -->|"Trigger compression"| HB
     HB -->|"Store compressed nodes"| DB
-    CM -.->|"Response"| User
+    Work -.->|"Response"| User
 ```
 
 ## Research Applications & Use Cases
