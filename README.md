@@ -726,14 +726,11 @@ uv run mypy .
 ### Running Examples
 
 ```bash
-# Basic model manager demo
-uv run python example_usage.py
-
 # Start standalone MCP server
-uv run python -m hierarchical_memory_middleware.mcp_server.memory_server
+uv run python -m hierarchical_memory_middleware.mcp_server.run_server
 
-# CLI interface (future feature)
-uv run hmm --help
+# start CLI
+uv run python -m hierarchical_memory_middleware.cli chat
 ```
 
 ## Architecture Deep Dive
@@ -746,20 +743,6 @@ uv run hmm --help
 4. **META Grouping**: When SUMMARY nodes exceed limit (default: 50)
 5. **ARCHIVE Compression**: When META groups exceed limit (default: 200)
 
-### MCP Integration Pattern
-
-```python
-# The AI can access memory during conversations like this:
-def ai_memory_usage_example():
-    """
-    During a conversation, the AI agent can:
-    1. Receive compressed context automatically
-    2. Use expand_node(N) to get full details of node N
-    3. Use find("topic") to search conversation history
-    4. Use get_conversation_stats() for overview
-    """
-    pass
-```
 
 ### Storage Schema
 
