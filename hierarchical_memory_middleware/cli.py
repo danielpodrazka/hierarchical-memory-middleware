@@ -84,7 +84,7 @@ def get_robust_input(prompt_str: str = "👤 You") -> str:
 
     Uses a multi-line input mode where:
     - Single line typed + Enter: sends immediately (auto-detected via select())
-    - Paste with newlines: captures all, shows "..." prompt, Enter to send
+    - Paste with newlines: captures all, shows count, single Enter to send
     - Manual multi-line: type, Enter, type more, Enter on empty line to send
 
     Returns the sanitized input text.
@@ -102,12 +102,12 @@ def get_robust_input(prompt_str: str = "👤 You") -> str:
 
     try:
         # Print the prompt
-        console.print(f"[bold blue]{prompt_str}:[/bold blue] [dim](Enter on empty line to send)[/dim]")
+        console.print(f"[bold blue]{prompt_str}:[/bold blue] [dim](Enter to send)[/dim]")
         console.print("> ", end="", highlight=False)
         sys.stdout.flush()
 
         lines = []
-        paste_detected = False
+        in_multiline_mode = False  # True after paste or manual multiline
 
         while True:
             try:
@@ -119,39 +119,43 @@ def get_robust_input(prompt_str: str = "👤 You") -> str:
                 if more_coming:
                     # More input waiting - we're in a paste, keep reading
                     lines.append(line)
-                    paste_detected = True
                     continue
 
-                # Paste just finished - add the last line and show continuation prompt
-                if paste_detected and not lines[-1:] == [line]:
-                    lines.append(line)
-                    # Show what was pasted and wait for explicit send
-                    line_count = len(lines)
-                    console.print(f"[dim]({line_count} lines pasted)[/dim]")
-                    console.print("... ", end="", highlight=False)
-                    sys.stdout.flush()
-                    paste_detected = False  # Now in normal multiline mode
-                    continue
-
-                # Normal input handling
-                if not lines:
-                    # First line, no paste
+                # No more input pending
+                if lines:
+                    # We have previous lines (from paste or multiline)
                     if line:
+                        # Non-empty line - add it
                         lines.append(line)
-                        break  # Single line - send immediately
+                    # Check if we just finished a paste (had lines, now no more coming)
+                    # and this is the first time we're seeing "no more input"
+                    if not in_multiline_mode:
+                        # Just finished pasting - show count and prompt for send
+                        in_multiline_mode = True
+                        line_count = len(lines)
+                        console.print(f"[dim]({line_count} lines) Press Enter to send, or keep typing[/dim]")
+                        console.print("... ", end="", highlight=False)
+                        sys.stdout.flush()
+                        continue
+                    elif not line:
+                        # Already in multiline mode and got empty line - send
+                        break
                     else:
-                        # Empty first line - ignore and re-prompt
+                        # In multiline mode, got content - continue
+                        console.print("... ", end="", highlight=False)
+                        sys.stdout.flush()
+                        continue
+                else:
+                    # First input, no previous lines
+                    if line:
+                        # Non-empty first line - send immediately (single-line mode)
+                        lines.append(line)
+                        break
+                    else:
+                        # Empty first line - re-prompt
                         console.print("> ", end="", highlight=False)
                         sys.stdout.flush()
                         continue
-                elif not line:
-                    # Empty line after content - send what we have
-                    break
-                else:
-                    # Non-empty line - add it and continue in multiline mode
-                    lines.append(line)
-                    console.print("... ", end="", highlight=False)
-                    sys.stdout.flush()
 
             except EOFError:
                 # Ctrl+D pressed - submit what we have
