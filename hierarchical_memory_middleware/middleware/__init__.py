@@ -3,7 +3,12 @@
 from typing import Optional, Union, List
 
 from .conversation_manager import HierarchicalConversationManager
-from .claude_agent_sdk_manager import ClaudeAgentSDKConversationManager
+from .claude_agent_sdk_manager import (
+    ClaudeAgentSDKConversationManager,
+    StreamChunk,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from ..config import Config
 from ..storage import DuckDBStorage
 from ..model_manager import ModelManager, ClaudeAgentSDKMarker
@@ -77,4 +82,7 @@ __all__ = [
     "HierarchicalConversationManager",
     "ClaudeAgentSDKConversationManager",
     "create_conversation_manager",
+    "StreamChunk",
+    "ToolCallEvent",
+    "ToolResultEvent",
 ]

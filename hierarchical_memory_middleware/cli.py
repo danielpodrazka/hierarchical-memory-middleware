@@ -18,7 +18,7 @@ from rich.markdown import Markdown
 from rich.status import Status
 
 from .config import Config
-from .middleware import create_conversation_manager
+from .middleware import create_conversation_manager, ToolCallEvent, ToolResultEvent
 from .middleware.conversation_manager import HierarchicalConversationManager
 from .middleware.claude_agent_sdk_manager import ClaudeAgentSDKConversationManager
 from .models import CompressionLevel, NodeType
@@ -451,11 +451,46 @@ async def _chat_session(
                     console.print("[bold green]🤖 Assistant:[/bold green]")
                     console.print("┌─ [green]Response[/green] ──────────────────────────────────────────────────────────────────┐")
 
-                    # Stream the response
+                    # Stream the response with tool events
                     response_chunks = []
-                    async for chunk in manager.chat_stream(user_input):
-                        console.print(chunk, end="", style="white")
-                        response_chunks.append(chunk)
+                    is_agent_sdk = isinstance(manager, ClaudeAgentSDKConversationManager)
+                    pending_tools = {}  # Track tool_id -> tool_name for matching results
+
+                    # Use tool events only for Agent SDK manager
+                    if is_agent_sdk:
+                        stream_iter = manager.chat_stream(user_input, include_tool_events=True)
+                    else:
+                        stream_iter = manager.chat_stream(user_input)
+
+                    async for event in stream_iter:
+                        if isinstance(event, str):
+                            # Regular text chunk
+                            console.print(event, end="", style="white")
+                            response_chunks.append(event)
+                        elif isinstance(event, ToolCallEvent):
+                            # Track this tool call for later result matching
+                            pending_tools[event.tool_id] = event.tool_name
+                            # Display tool call with collapsible style
+                            tool_input_str = json.dumps(event.tool_input, indent=2)
+                            if len(tool_input_str) > 200:
+                                tool_input_preview = tool_input_str[:200] + "..."
+                            else:
+                                tool_input_preview = tool_input_str
+                            console.print()
+                            console.print(f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]")
+                            console.print(f"    [dim]{tool_input_preview}[/dim]")
+                        elif isinstance(event, ToolResultEvent):
+                            # Get tool name from pending calls
+                            tool_name = pending_tools.get(event.tool_id, "unknown")
+                            # Display tool result with tool name
+                            result_preview = event.content[:300] if len(event.content) > 300 else event.content
+                            # Truncate to first few lines
+                            lines = result_preview.split('\n')
+                            if len(lines) > 5:
+                                result_preview = '\n'.join(lines[:5]) + f"\n    ... ({len(lines)} lines total)"
+                            style = "red" if event.is_error else "dim green"
+                            console.print(f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{result_preview}[/{style}]")
+                            console.print()
 
                     # Add bottom border
                     console.print()

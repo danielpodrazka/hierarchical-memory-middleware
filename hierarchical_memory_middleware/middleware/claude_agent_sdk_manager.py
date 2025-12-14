@@ -10,7 +10,8 @@ import asyncio
 import json
 import logging
 import sys
-from typing import Optional, List, Dict, Any, AsyncIterator
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any, AsyncIterator, Union
 
 from claude_agent_sdk import (
     query,
@@ -18,8 +19,33 @@ from claude_agent_sdk import (
     AssistantMessage,
     ResultMessage,
     TextBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+    UserMessage,
 )
 from claude_agent_sdk.types import StreamEvent
+
+
+@dataclass
+class StreamChunk:
+    """A text chunk from the stream."""
+    text: str
+
+
+@dataclass
+class ToolCallEvent:
+    """A tool call event."""
+    tool_id: str
+    tool_name: str
+    tool_input: Dict[str, Any]
+
+
+@dataclass
+class ToolResultEvent:
+    """A tool result event."""
+    tool_id: str
+    content: str
+    is_error: bool = False
 
 from ..config import Config
 from ..storage import DuckDBStorage
@@ -326,14 +352,18 @@ class ClaudeAgentSDKConversationManager:
 
         return full_response
 
-    async def chat_stream(self, user_message: str) -> AsyncIterator[str]:
+    async def chat_stream(
+        self, user_message: str, include_tool_events: bool = False
+    ) -> AsyncIterator[Union[str, StreamChunk, ToolCallEvent, ToolResultEvent]]:
         """Streaming version of chat with hierarchical memory integration.
 
         Args:
             user_message: The user's message
+            include_tool_events: If True, yields ToolCallEvent and ToolResultEvent objects.
+                                 If False (default), yields only text strings for backwards compatibility.
 
         Yields:
-            Chunks of the assistant's response as they arrive
+            Text chunks (str) or event objects (StreamChunk, ToolCallEvent, ToolResultEvent)
         """
         if not self.conversation_id:
             raise ValueError("No active conversation. Call start_conversation() first.")
@@ -366,15 +396,46 @@ class ClaudeAgentSDKConversationManager:
                             if chunk:
                                 full_response += chunk
                                 yield chunk
-                # Handle complete assistant messages (fallback)
+
+                # Handle assistant messages with tool use
                 elif isinstance(message, AssistantMessage):
-                    # Only use if we haven't been streaming
-                    if not full_response:
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                chunk = block.text
-                                full_response += chunk
-                                yield chunk
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            # Only yield text if we haven't been streaming it
+                            if not full_response:
+                                full_response += block.text
+                                yield block.text
+                        elif isinstance(block, ToolUseBlock) and include_tool_events:
+                            # Track and yield tool call
+                            tool_call = {
+                                "tool_id": block.id,
+                                "tool_name": block.name,
+                                "tool_input": block.input,
+                            }
+                            self._current_tool_calls.append(tool_call)
+                            yield ToolCallEvent(
+                                tool_id=block.id,
+                                tool_name=block.name,
+                                tool_input=block.input,
+                            )
+
+                # Handle user messages with tool results
+                elif isinstance(message, UserMessage) and include_tool_events:
+                    for block in message.content:
+                        if isinstance(block, ToolResultBlock):
+                            # Track and yield tool result
+                            tool_result = {
+                                "tool_id": block.tool_use_id,
+                                "content": block.content,
+                                "is_error": block.is_error,
+                            }
+                            self._current_tool_results.append(tool_result)
+                            yield ToolResultEvent(
+                                tool_id=block.tool_use_id,
+                                content=block.content if isinstance(block.content, str) else str(block.content),
+                                is_error=bool(block.is_error),
+                            )
+
                 elif isinstance(message, ResultMessage):
                     logger.debug(
                         f"Query completed: duration={message.duration_ms}ms, "
