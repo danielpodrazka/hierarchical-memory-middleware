@@ -9,9 +9,18 @@ system.
 import asyncio
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any, AsyncIterator, Union
+
+# Suppress verbose logging from Claude Agent SDK internals BEFORE importing the SDK
+# Using CRITICAL to suppress ERROR messages from SIGINT handling (expected during Ctrl+C)
+# This must be done before the SDK import to prevent the loggers from being created with default settings
+logging.getLogger("claude_agent_sdk").setLevel(logging.CRITICAL)
+logging.getLogger("claude_agent_sdk._internal").setLevel(logging.CRITICAL)
+logging.getLogger("claude_agent_sdk._internal.transport").setLevel(logging.CRITICAL)
+logging.getLogger("claude_agent_sdk._internal.query").setLevel(logging.CRITICAL)
 
 from claude_agent_sdk import (
     query,
@@ -55,10 +64,6 @@ from ..advanced_hierarchy import AdvancedCompressionManager
 from ..models import CompressionLevel, NodeType, HierarchyThresholds, ModelConfig
 
 logger = logging.getLogger(__name__)
-
-# Suppress verbose logging from Claude Agent SDK internals
-logging.getLogger("claude_agent_sdk._internal").setLevel(logging.WARNING)
-logging.getLogger("claude_agent_sdk._internal.transport").setLevel(logging.WARNING)
 
 
 class ClaudeAgentSDKConversationManager:
@@ -458,9 +463,17 @@ class ClaudeAgentSDKConversationManager:
                         f"cost=${message.total_cost_usd}"
                     )
         except Exception as e:
-            # Check if this is a SIGINT (Ctrl+C) interrupt - exit code -2
-            error_str = str(e)
-            if "exit code -2" in error_str or "exit code: -2" in error_str:
+            # Check if this is a SIGINT (Ctrl+C) interrupt
+            # Exit codes: -2 (Python internal), 130 (128+2, standard SIGINT)
+            error_str = str(e).lower()
+            is_sigint = (
+                "exit code -2" in error_str
+                or "exit code 130" in error_str
+                or "exit code: -2" in error_str
+                or "exit code: 130" in error_str
+                or "sigint" in error_str
+            )
+            if is_sigint:
                 # This is expected when user interrupts with Ctrl+C, don't log as error
                 logger.debug(f"Streaming interrupted by user (SIGINT): {e}")
             else:
@@ -549,7 +562,12 @@ class ClaudeAgentSDKConversationManager:
         Returns:
             Complete system prompt
         """
-        base_prompt = """You are a helpful AI assistant with access to conversation memory.
+        # Get current working directory for context
+        cwd = os.getcwd()
+
+        base_prompt = f"""You are a helpful AI assistant with access to conversation memory.
+
+**Working Directory:** {cwd}
 
 You are running within a hierarchical memory system. Only recent messages are shown in full detail - older messages are progressively compressed into summaries, meta-summaries, and archived context. Use the memory tools (search_memory, expand_node, get_recent_nodes) when you need to recall specific details from earlier in the conversation.
 
@@ -560,6 +578,8 @@ The conversation history below is organized hierarchically:
 - RECENT CONVERSATION: The most recent exchanges in full detail
 
 Use this context to maintain continuity and reference past discussions when relevant.
+
+**Tip:** Save important context (like working directory, project details, user preferences) to your scratchpad using the `set_system_prompt` or `append_to_system_prompt` tools for persistence across conversations.
 """
 
         # Build the full system prompt
@@ -678,9 +698,11 @@ If you don't call yield_to_human, the system will automatically prompt you to co
         return [
             {
                 "node_id": r.node.node_id,
+                "node_type": r.node.node_type.value,
                 "content": r.node.content[:500],
                 "summary": r.node.summary,
-                "relevance": r.relevance_score,
+                "timestamp": r.node.timestamp.isoformat() if r.node.timestamp else "",
+                "relevance_score": r.relevance_score,
                 "match_type": r.match_type,
                 "compression_level": r.node.level.name,
             }

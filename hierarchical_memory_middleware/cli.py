@@ -18,6 +18,7 @@ from rich.text import Text
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from rich.status import Status
+from rich.markup import escape as rich_escape
 
 from .config import Config
 from .middleware import create_conversation_manager, ToolCallEvent, ToolResultEvent
@@ -545,8 +546,8 @@ async def _chat_session(
                                 stream_interrupted = True
                                 break
                             if isinstance(event, str):
-                                # Regular text chunk
-                                console.print(event, end="", style="white")
+                                # Regular text chunk - escape Rich markup chars
+                                console.print(rich_escape(event), end="", style="white")
                                 response_chunks.append(event)
                             elif isinstance(event, ToolCallEvent):
                                 # Track this tool call for later result matching
@@ -556,7 +557,7 @@ async def _chat_session(
                                     yielded_to_human = True
                                     reason = event.tool_input.get("reason", "Task complete")
                                     console.print()
-                                    console.print(f"  [bold yellow]⏸️  Yielding to human: {reason}[/bold yellow]")
+                                    console.print(f"  [bold yellow]⏸️  Yielding to human: {rich_escape(reason)}[/bold yellow]")
                                 else:
                                     # Display tool call with collapsible style
                                     tool_input_str = json.dumps(event.tool_input, indent=2)
@@ -566,7 +567,7 @@ async def _chat_session(
                                         tool_input_preview = tool_input_str
                                     console.print()
                                     console.print(f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]")
-                                    console.print(f"    [dim]{tool_input_preview}[/dim]")
+                                    console.print(f"    [dim]{rich_escape(tool_input_preview)}[/dim]")
                             elif isinstance(event, ToolResultEvent):
                                 # Get tool name from pending calls
                                 tool_name = pending_tools.get(event.tool_id, "unknown")
@@ -580,12 +581,31 @@ async def _chat_session(
                                 if len(lines) > 5:
                                     result_preview = '\n'.join(lines[:5]) + f"\n    ... ({len(lines)} lines total)"
                                 style = "red" if event.is_error else "dim green"
-                                console.print(f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{result_preview}[/{style}]")
+                                console.print(f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{rich_escape(result_preview)}[/{style}]")
                                 console.print()
+                    except KeyboardInterrupt:
+                        # Direct Ctrl+C during streaming
+                        stream_interrupted = True
+                    except SystemExit as e:
+                        # Subprocess exit - check if SIGINT related
+                        exit_code = e.code if hasattr(e, 'code') else None
+                        if exit_code in (-2, 130, 2) or interrupted:
+                            stream_interrupted = True
+                        else:
+                            raise
                     except Exception as stream_error:
-                        # Check if this was due to Ctrl+C interrupt (exit code -2 or similar)
+                        # Check if this was due to Ctrl+C interrupt
+                        # Exit codes: -2 (Python internal), 130 (128+2, standard SIGINT)
                         error_str = str(stream_error).lower()
-                        if interrupted or "exit code -2" in error_str or "sigint" in error_str:
+                        is_sigint = (
+                            interrupted
+                            or "exit code -2" in error_str
+                            or "exit code 130" in error_str
+                            or "exit code: -2" in error_str
+                            or "exit code: 130" in error_str
+                            or "sigint" in error_str
+                        )
+                        if is_sigint:
                             stream_interrupted = True
                             # Don't log this as an error - it's expected
                         else:
@@ -643,12 +663,49 @@ async def _chat_session(
                     break
                 # In agentic mode, signal handler already set interrupted=True, yielded_to_human=True
                 continue
+            except SystemExit as e:
+                # Handle subprocess exit codes (SIGINT = 130 or -2)
+                exit_code = e.code if hasattr(e, 'code') else None
+                if exit_code in (-2, 130, 2) or interrupted:
+                    # SIGINT-related exit - treat as interrupt in agentic mode
+                    if agentic:
+                        console.print("\n[yellow]⏸️  Process interrupted - waiting for your input[/yellow]")
+                        yielded_to_human = True
+                        interrupted = False
+                        continue
+                    else:
+                        break
+                else:
+                    # Non-SIGINT exit - re-raise
+                    raise
             except Exception as e:
+                # Check if this is a SIGINT-related error message
+                error_str = str(e).lower()
+                is_sigint = (
+                    "exit code -2" in error_str
+                    or "exit code 130" in error_str
+                    or "exit code: -2" in error_str
+                    or "exit code: 130" in error_str
+                    or "sigint" in error_str
+                )
+                if is_sigint and agentic:
+                    console.print("\n[yellow]⏸️  Process interrupted - waiting for your input[/yellow]")
+                    yielded_to_human = True
+                    interrupted = False
+                    continue
+                elif is_sigint:
+                    break
                 console.print(f"[red]❌ Error: {str(e)}[/red]")
                 logger.exception("Chat error")
                 yielded_to_human = True  # Wait for user after error
                 continue
 
+    except SystemExit as e:
+        # Handle subprocess exit during cleanup
+        exit_code = e.code if hasattr(e, 'code') else None
+        if exit_code not in (-2, 130, 2, 0, None):
+            console.print(f"[red]❌ Process exited with code {exit_code}[/red]")
+        # Don't re-raise - just exit cleanly
     except Exception as e:
         console.print(f"[red]❌ Failed to initialize: {str(e)}[/red]")
         logger.exception("Initialization error")
@@ -906,7 +963,7 @@ async def remove_node_from_chat(manager, node_id: int, conv_id: str):
         console.print(f"Type: {node_type_icon} {node_details['node_type']}")
         console.print(f"Timestamp: {node_details['timestamp']}")
         console.print(f"Level: {node_details['level']}")
-        console.print(f"Content Preview: {content_preview}")
+        console.print(f"Content Preview: {rich_escape(content_preview)}")
 
         # Ask for confirmation
         console.print(f"\n[red]⚠️  WARNING: This will permanently delete node {node_id} from the conversation.[/red]")
@@ -1338,7 +1395,7 @@ async def _remove_node(
         console.print(f"Type: {node_type_icon} {node_details['node_type']}")
         console.print(f"Timestamp: {node_details['timestamp']}")
         console.print(f"Level: {node_details['level']}")
-        console.print(f"Content Preview: {content_preview}")
+        console.print(f"Content Preview: {rich_escape(content_preview)}")
 
         # Confirmation unless --force is used
         if not force:
