@@ -136,6 +136,31 @@ Agentic mode allows the AI to work autonomously on multi-step tasks without requ
 uv run python -m hierarchical_memory_middleware.cli chat --agentic
 ```
 
+### Recommended Full Agentic Setup
+
+For a fully autonomous coding assistant experience, combine these flags:
+
+```bash
+hmm chat --model claude-agent-opus --dangerously-skip-permissions --agentic
+```
+
+**What each flag does:**
+
+| Flag | Purpose |
+|------|---------|
+| `--model claude-agent-opus` | Uses Claude Opus via your Pro/Max subscription (most capable model) |
+| `--dangerously-skip-permissions` | Bypasses all permission prompts for file edits, shell commands, etc. |
+| `--agentic` | AI continues working autonomously until calling `yield_to_human()` |
+
+**Why this combination works well:**
+
+1. **No interruptions**: The AI won't pause to ask "Can I edit this file?" or "Can I run this command?"
+2. **Full autonomy**: Multi-step tasks complete without manual "continue" prompts
+3. **You stay in control**: Press Ctrl+C anytime to interrupt, or the AI calls `yield_to_human()` when done
+4. **Subscription-based**: No API costs - uses your existing Claude Pro/Max subscription
+
+**⚠️ Security note**: The `--dangerously-skip-permissions` flag means the AI can modify files and run commands without asking. Only use this in trusted environments (your own projects, sandboxed environments, etc.).
+
 ### How It Works
 
 ```
@@ -446,6 +471,8 @@ graph TB
 
 ## Installation
 
+### Option 1: Local Development
+
 ```bash
 # Clone the repository
 git clone https://github.com/danielpodrazka/hierarchical-memory-middleware
@@ -459,6 +486,23 @@ pip install -e .
 
 # Optional: Install embeddings for semantic search
 uv sync --extra embeddings
+```
+
+### Option 2: Global Installation with `uv tool`
+
+Install globally to use from anywhere:
+
+```bash
+# Install from local path
+uv tool install -e /path/to/hierarchical-memory-middleware
+
+# Or install directly from GitHub
+uv tool install git+https://github.com/danielpodrazka/hierarchical-memory-middleware
+
+# Then run from anywhere
+hmm chat
+hmm chat --model gpt-4o
+hmm chat --agentic
 ```
 
 ## Configuration
