@@ -1,16 +1,22 @@
 """Consolidated CLI interface for hierarchical memory middleware with MCP integration."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import signal
 import sys
+import tempfile
 import time
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Tuple
 
 import typer
+
+# Note: We use standard input() instead of prompt_toolkit because
+# prompt_toolkit's sync prompt conflicts with asyncio event loops
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -36,6 +42,234 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 console = Console()
+
+# Directory for storing large pasted content
+PASTE_STORAGE_DIR = Path(tempfile.gettempdir()) / "hmm_paste_storage"
+
+# Thresholds for large paste handling
+LARGE_PASTE_THRESHOLD = 5000  # characters
+LARGE_PASTE_LINES_THRESHOLD = 8  # lines
+
+
+def sanitize_input(text: str) -> str:
+    """Sanitize input text to remove problematic characters that break Rich markup.
+
+    This handles:
+    - Null bytes and other control characters (except newlines/tabs)
+    - ANSI escape sequences (terminal color codes, etc.)
+    """
+    import re
+
+    if not text:
+        return text
+
+    # First, remove ANSI escape sequences (e.g., \x1b[31m for colors)
+    # This regex matches: ESC followed by [ then any params and a letter
+    ansi_pattern = re.compile(
+        r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\"
+    )
+    sanitized = ansi_pattern.sub("", text)
+
+    # Remove null bytes and other problematic control characters
+    # Keep: \n (10), \r (13), \t (9)
+    sanitized = "".join(
+        char for char in sanitized if ord(char) >= 32 or char in "\n\r\t"
+    )
+
+    return sanitized
+
+
+def get_robust_input(prompt_str: str = "👤 You") -> str:
+    """Get user input with robust handling for multiline pastes.
+
+    Uses a multi-line input mode where:
+    - Single line typed + Enter: sends immediately (auto-detected via select())
+    - Paste with newlines: captures all, shows "..." prompt, Enter to send
+    - Manual multi-line: type, Enter, type more, Enter on empty line to send
+
+    Returns the sanitized input text.
+    """
+    import select
+    import sys
+
+    def has_pending_input(timeout: float = 0.05) -> bool:
+        """Check if there's more input waiting in stdin."""
+        try:
+            readable, _, _ = select.select([sys.stdin], [], [], timeout)
+            return bool(readable)
+        except (ValueError, OSError, AttributeError):
+            return False
+
+    try:
+        # Print the prompt
+        console.print(f"[bold blue]{prompt_str}:[/bold blue] [dim](Enter on empty line to send)[/dim]")
+        console.print("> ", end="", highlight=False)
+        sys.stdout.flush()
+
+        lines = []
+        paste_detected = False
+
+        while True:
+            try:
+                line = input()
+
+                # Check if more input is immediately available (paste detection)
+                more_coming = has_pending_input(0.05)
+
+                if more_coming:
+                    # More input waiting - we're in a paste, keep reading
+                    lines.append(line)
+                    paste_detected = True
+                    continue
+
+                # Paste just finished - add the last line and show continuation prompt
+                if paste_detected and not lines[-1:] == [line]:
+                    lines.append(line)
+                    # Show what was pasted and wait for explicit send
+                    line_count = len(lines)
+                    console.print(f"[dim]({line_count} lines pasted)[/dim]")
+                    console.print("... ", end="", highlight=False)
+                    sys.stdout.flush()
+                    paste_detected = False  # Now in normal multiline mode
+                    continue
+
+                # Normal input handling
+                if not lines:
+                    # First line, no paste
+                    if line:
+                        lines.append(line)
+                        break  # Single line - send immediately
+                    else:
+                        # Empty first line - ignore and re-prompt
+                        console.print("> ", end="", highlight=False)
+                        sys.stdout.flush()
+                        continue
+                elif not line:
+                    # Empty line after content - send what we have
+                    break
+                else:
+                    # Non-empty line - add it and continue in multiline mode
+                    lines.append(line)
+                    console.print("... ", end="", highlight=False)
+                    sys.stdout.flush()
+
+            except EOFError:
+                # Ctrl+D pressed - submit what we have
+                console.print()  # New line after ^D
+                break
+
+        result = "\n".join(lines)
+        return sanitize_input(result.strip())
+
+    except EOFError:
+        # Ctrl+D on completely empty prompt
+        raise KeyboardInterrupt()
+    except KeyboardInterrupt:
+        raise
+
+
+def store_large_paste(content: str, conversation_id: str) -> Tuple[str, str]:
+    """Store large pasted content and return (reference_id, preview).
+
+    Returns:
+        Tuple of (reference_id, preview_text)
+    """
+    # Create storage directory if needed
+    PASTE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Generate a short hash-based reference ID
+    content_hash = hashlib.sha256(content.encode()).hexdigest()[:8]
+    timestamp = int(time.time())
+    reference_id = f"paste_{timestamp}_{content_hash}"
+
+    # Store the content
+    paste_file = PASTE_STORAGE_DIR / f"{reference_id}.txt"
+    paste_file.write_text(content, encoding="utf-8")
+
+    # Create metadata
+    meta_file = PASTE_STORAGE_DIR / f"{reference_id}.meta.json"
+    lines = content.split("\n")
+    meta = {
+        "reference_id": reference_id,
+        "conversation_id": conversation_id,
+        "timestamp": timestamp,
+        "char_count": len(content),
+        "line_count": len(lines),
+        "first_line": lines[0][:100] if lines else "",
+        "stored_path": str(paste_file),
+    }
+    meta_file.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    # Generate preview (first and last few lines)
+    if len(lines) <= 6:
+        preview = content[:500]
+    else:
+        first_lines = "\n".join(lines[:3])
+        last_lines = "\n".join(lines[-2:])
+        preview = f"{first_lines}\n... ({len(lines) - 5} more lines) ...\n{last_lines}"
+        if len(preview) > 500:
+            preview = preview[:500] + "..."
+
+    return reference_id, preview
+
+
+def get_stored_paste(reference_id: str) -> Optional[str]:
+    """Retrieve stored paste content by reference ID."""
+    paste_file = PASTE_STORAGE_DIR / f"{reference_id}.txt"
+    if paste_file.exists():
+        return paste_file.read_text(encoding="utf-8")
+    return None
+
+
+def is_large_paste(text: str) -> bool:
+    """Check if text qualifies as a large paste."""
+    return (
+        len(text) > LARGE_PASTE_THRESHOLD
+        or text.count("\n") > LARGE_PASTE_LINES_THRESHOLD
+    )
+
+
+def handle_user_input(
+    conversation_id: str, compact_large_pastes: bool = True
+) -> Tuple[str, bool]:
+    """Get user input with full handling for large pastes.
+
+    Args:
+        conversation_id: Current conversation ID (for paste storage)
+        compact_large_pastes: If True, store large pastes and return reference
+
+    Returns:
+        Tuple of (processed_input, was_compacted)
+    """
+    raw_input = get_robust_input()
+
+    if not raw_input:
+        return "", False
+
+    # Check if this is a large paste that should be compacted
+    if compact_large_pastes and is_large_paste(raw_input):
+        reference_id, preview = store_large_paste(raw_input, conversation_id)
+
+        # Show user what happened
+        lines = raw_input.split("\n")
+        console.print(
+            f"\n[dim]📋 Large paste detected ({len(raw_input):,} chars, {len(lines)} lines)[/dim]"
+        )
+        console.print(f"[dim]   Stored as: {reference_id}[/dim]")
+        console.print(f"[dim]   Preview:[/dim]")
+        for line in preview.split("\n")[:5]:
+            console.print(
+                f"[dim]   │ {rich_escape(line[:80])}{'...' if len(line) > 80 else ''}[/dim]"
+            )
+        if len(preview.split("\n")) > 5:
+            console.print(f"[dim]   │ ...[/dim]")
+        console.print()
+
+        # Return a message that includes the full content but with context
+        # The AI will see the full paste but we've stored a reference for the UI
+        return raw_input, True
+
+    return raw_input, False
 
 
 @app.callback()
@@ -265,8 +499,16 @@ def chat(
     """Start an interactive chat session with MCP memory tools."""
     asyncio.run(
         _chat_session(
-            conversation_id, name, model, db_path, recent_limit, mcp_port, export_dir, stream,
-            dangerously_skip_permissions, agentic
+            conversation_id,
+            name,
+            model,
+            db_path,
+            recent_limit,
+            mcp_port,
+            export_dir,
+            stream,
+            dangerously_skip_permissions,
+            agentic,
         )
     )
 
@@ -315,7 +557,9 @@ async def _chat_session(
     if dangerously_skip_permissions:
         console.print("[bold red]⚠️  DANGER: All permissions bypassed![/bold red]")
     if agentic:
-        console.print("[bold cyan]🤖 AGENTIC MODE: AI continues until done. Ctrl+C to interrupt, Ctrl+C×2 to quit[/bold cyan]")
+        console.print(
+            "[bold cyan]🤖 AGENTIC MODE: AI continues until done. Ctrl+C to interrupt, Ctrl+C×2 to quit[/bold cyan]"
+        )
     console.print(f"🔗 Recent nodes limit: {config.recent_node_limit}")
     console.print(f"📈 Summary threshold: {config.summary_threshold}")
     console.print(f"⚡ Streaming: {'Enabled' if stream else 'Disabled'}")
@@ -464,7 +708,9 @@ async def _chat_session(
             if agentic:
                 interrupted = True
                 yielded_to_human = True
-                console.print("\n[yellow]⏸️  Ctrl+C: Interrupting... (press again quickly to quit)[/yellow]")
+                console.print(
+                    "\n[yellow]⏸️  Ctrl+C: Interrupting... (press again quickly to quit)[/yellow]"
+                )
             else:
                 raise KeyboardInterrupt()
 
@@ -484,7 +730,9 @@ async def _chat_session(
             if agentic:
                 interrupted = True
                 yielded_to_human = True
-                console.print("\n[yellow]⏸️  Interrupted - waiting for your input (Ctrl+C again to quit)[/yellow]")
+                console.print(
+                    "\n[yellow]⏸️  Interrupted - waiting for your input (Ctrl+C again to quit)[/yellow]"
+                )
             else:
                 console.print("\n[yellow]👋 Chat interrupted by user[/yellow]")
                 raise KeyboardInterrupt()
@@ -503,7 +751,10 @@ async def _chat_session(
                     yielded_to_human = False  # Reset for next iteration
                     interrupted = False
                     try:
-                        user_input = typer.prompt("👤 You", type=str).strip()
+                        # Use robust input handler that handles multiline pastes
+                        user_input, was_large_paste = handle_user_input(
+                            conv_id, compact_large_pastes=True
+                        )
                     except KeyboardInterrupt:
                         # Handle Ctrl+C during input prompt - in agentic mode, just continue
                         console.print()  # New line after ^C
@@ -525,17 +776,23 @@ async def _chat_session(
                 if stream:
                     # Streaming mode
                     console.print("[bold green]🤖 Assistant:[/bold green]")
-                    console.print("┌─ [green]Response[/green] ──────────────────────────────────────────────────────────────────┐")
+                    console.print(
+                        "┌─ [green]Response[/green] ──────────────────────────────────────────────────────────────────┐"
+                    )
 
                     # Stream the response with tool events
                     response_chunks = []
-                    is_agent_sdk = isinstance(manager, ClaudeAgentSDKConversationManager)
+                    is_agent_sdk = isinstance(
+                        manager, ClaudeAgentSDKConversationManager
+                    )
                     pending_tools = {}  # Track tool_id -> tool_name for matching results
                     stream_interrupted = False
 
                     # Use tool events only for Agent SDK manager
                     if is_agent_sdk:
-                        stream_iter = manager.chat_stream(user_input, include_tool_events=True)
+                        stream_iter = manager.chat_stream(
+                            user_input, include_tool_events=True
+                        )
                     else:
                         stream_iter = manager.chat_stream(user_input)
 
@@ -555,19 +812,31 @@ async def _chat_session(
                                 # Check if this is a yield_to_human call
                                 if event.tool_name == "mcp__memory__yield_to_human":
                                     yielded_to_human = True
-                                    reason = event.tool_input.get("reason", "Task complete")
+                                    reason = event.tool_input.get(
+                                        "reason", "Task complete"
+                                    )
                                     console.print()
-                                    console.print(f"  [bold yellow]⏸️  Yielding to human: {rich_escape(reason)}[/bold yellow]")
+                                    console.print(
+                                        f"  [bold yellow]⏸️  Yielding to human: {rich_escape(reason)}[/bold yellow]"
+                                    )
                                 else:
                                     # Display tool call with collapsible style
-                                    tool_input_str = json.dumps(event.tool_input, indent=2)
+                                    tool_input_str = json.dumps(
+                                        event.tool_input, indent=2
+                                    )
                                     if len(tool_input_str) > 200:
-                                        tool_input_preview = tool_input_str[:200] + "..."
+                                        tool_input_preview = (
+                                            tool_input_str[:200] + "..."
+                                        )
                                     else:
                                         tool_input_preview = tool_input_str
                                     console.print()
-                                    console.print(f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]")
-                                    console.print(f"    [dim]{rich_escape(tool_input_preview)}[/dim]")
+                                    console.print(
+                                        f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]"
+                                    )
+                                    console.print(
+                                        f"    [dim]{rich_escape(tool_input_preview)}[/dim]"
+                                    )
                             elif isinstance(event, ToolResultEvent):
                                 # Get tool name from pending calls
                                 tool_name = pending_tools.get(event.tool_id, "unknown")
@@ -575,20 +844,29 @@ async def _chat_session(
                                 if tool_name == "mcp__memory__yield_to_human":
                                     continue
                                 # Display tool result with tool name
-                                result_preview = event.content[:300] if len(event.content) > 300 else event.content
+                                result_preview = (
+                                    event.content[:300]
+                                    if len(event.content) > 300
+                                    else event.content
+                                )
                                 # Truncate to first few lines
-                                lines = result_preview.split('\n')
+                                lines = result_preview.split("\n")
                                 if len(lines) > 5:
-                                    result_preview = '\n'.join(lines[:5]) + f"\n    ... ({len(lines)} lines total)"
+                                    result_preview = (
+                                        "\n".join(lines[:5])
+                                        + f"\n    ... ({len(lines)} lines total)"
+                                    )
                                 style = "red" if event.is_error else "dim green"
-                                console.print(f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{rich_escape(result_preview)}[/{style}]")
+                                console.print(
+                                    f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{rich_escape(result_preview)}[/{style}]"
+                                )
                                 console.print()
                     except KeyboardInterrupt:
                         # Direct Ctrl+C during streaming
                         stream_interrupted = True
                     except SystemExit as e:
                         # Subprocess exit - check if SIGINT related
-                        exit_code = e.code if hasattr(e, 'code') else None
+                        exit_code = e.code if hasattr(e, "code") else None
                         if exit_code in (-2, 130, 2) or interrupted:
                             stream_interrupted = True
                         else:
@@ -615,11 +893,15 @@ async def _chat_session(
                     # Add bottom border
                     console.print()
                     if stream_interrupted:
-                        console.print("└─ [yellow]interrupted[/yellow] ──────────────────────────────────────────────────────────────┘")
+                        console.print(
+                            "└─ [yellow]interrupted[/yellow] ──────────────────────────────────────────────────────────────┘"
+                        )
                     else:
-                        console.print("└────────────────────────────────────────────────────────────────────────────────┘")
+                        console.print(
+                            "└────────────────────────────────────────────────────────────────────────────────┘"
+                        )
                     console.print()
-                    response = ''.join(response_chunks)
+                    response = "".join(response_chunks)
 
                     # If stream was interrupted, save partial response
                     if stream_interrupted:
@@ -665,11 +947,13 @@ async def _chat_session(
                 continue
             except SystemExit as e:
                 # Handle subprocess exit codes (SIGINT = 130 or -2)
-                exit_code = e.code if hasattr(e, 'code') else None
+                exit_code = e.code if hasattr(e, "code") else None
                 if exit_code in (-2, 130, 2) or interrupted:
                     # SIGINT-related exit - treat as interrupt in agentic mode
                     if agentic:
-                        console.print("\n[yellow]⏸️  Process interrupted - waiting for your input[/yellow]")
+                        console.print(
+                            "\n[yellow]⏸️  Process interrupted - waiting for your input[/yellow]"
+                        )
                         yielded_to_human = True
                         interrupted = False
                         continue
@@ -689,7 +973,9 @@ async def _chat_session(
                     or "sigint" in error_str
                 )
                 if is_sigint and agentic:
-                    console.print("\n[yellow]⏸️  Process interrupted - waiting for your input[/yellow]")
+                    console.print(
+                        "\n[yellow]⏸️  Process interrupted - waiting for your input[/yellow]"
+                    )
                     yielded_to_human = True
                     interrupted = False
                     continue
@@ -702,7 +988,7 @@ async def _chat_session(
 
     except SystemExit as e:
         # Handle subprocess exit during cleanup
-        exit_code = e.code if hasattr(e, 'code') else None
+        exit_code = e.code if hasattr(e, "code") else None
         if exit_code not in (-2, 130, 2, 0, None):
             console.print(f"[red]❌ Process exited with code {exit_code}[/red]")
         # Don't re-raise - just exit cleanly
@@ -712,7 +998,7 @@ async def _chat_session(
         sys.exit(1)
     finally:
         # Restore original signal handler
-        if 'original_handler' in dir():
+        if "original_handler" in dir():
             signal.signal(signal.SIGINT, original_handler)
         # Clean up external servers
         mcp_manager.stop_all()
@@ -950,15 +1236,17 @@ async def remove_node_from_chat(manager, node_id: int, conv_id: str):
         # Get node details first for confirmation
         node_details = await manager.get_node_details(node_id, conv_id)
         if not node_details:
-            console.print(
-                f"[red]❌ Node {node_id} not found in conversation.[/red]"
-            )
+            console.print(f"[red]❌ Node {node_id} not found in conversation.[/red]")
             return
 
         # Show node details
-        node_type_icon = "👤" if node_details['node_type'] == "user" else "🤖"
-        content_preview = node_details['content'][:100] + "..." if len(node_details['content']) > 100 else node_details['content']
-        
+        node_type_icon = "👤" if node_details["node_type"] == "user" else "🤖"
+        content_preview = (
+            node_details["content"][:100] + "..."
+            if len(node_details["content"]) > 100
+            else node_details["content"]
+        )
+
         console.print(f"\n[yellow]📄 Node {node_id} Details:[/yellow]")
         console.print(f"Type: {node_type_icon} {node_details['node_type']}")
         console.print(f"Timestamp: {node_details['timestamp']}")
@@ -966,10 +1254,11 @@ async def remove_node_from_chat(manager, node_id: int, conv_id: str):
         console.print(f"Content Preview: {rich_escape(content_preview)}")
 
         # Ask for confirmation
-        console.print(f"\n[red]⚠️  WARNING: This will permanently delete node {node_id} from the conversation.[/red]")
+        console.print(
+            f"\n[red]⚠️  WARNING: This will permanently delete node {node_id} from the conversation.[/red]"
+        )
         response = typer.prompt(
-            "Are you sure you want to remove this node? (yes/no)",
-            type=str
+            "Are you sure you want to remove this node? (yes/no)", type=str
         )
         if response.lower() not in ["yes", "y"]:
             console.print("[yellow]Operation cancelled.[/yellow]")
@@ -977,7 +1266,7 @@ async def remove_node_from_chat(manager, node_id: int, conv_id: str):
 
         # Remove the node
         success = await manager.remove_node(node_id, conv_id)
-        
+
         if success:
             console.print(
                 f"[green]✅ Successfully removed node {node_id} from conversation.[/green]"
@@ -989,6 +1278,7 @@ async def remove_node_from_chat(manager, node_id: int, conv_id: str):
 
     except Exception as e:
         console.print(f"[red]❌ Error removing node {node_id}: {e}[/red]")
+
 
 async def show_recent_messages(manager, limit: int = 10):
     """Show recent conversation messages."""
@@ -1345,9 +1635,7 @@ def remove_node(
         None, "--db-path", "-d", help="Database path"
     ),
     mcp_port: Optional[int] = typer.Option(None, "--mcp-port", help="MCP server port"),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Skip confirmation prompt"
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ):
     """Remove a specific node from a conversation."""
     asyncio.run(_remove_node(conversation_id, idx, db_path, mcp_port, force))
@@ -1375,9 +1663,7 @@ async def _remove_node(
 
         # Initialize manager
         mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
-        manager = HierarchicalConversationManager(
-            config, mcp_server_url=mcp_server_url
-        )
+        manager = HierarchicalConversationManager(config, mcp_server_url=mcp_server_url)
 
         # Get node details first for confirmation
         node_details = await manager.get_node_details(node_id, full_conversation_id)
@@ -1388,9 +1674,13 @@ async def _remove_node(
             return
 
         # Show node details
-        node_type_icon = "👤" if node_details['node_type'] == "user" else "🤖"
-        content_preview = node_details['content'][:100] + "..." if len(node_details['content']) > 100 else node_details['content']
-        
+        node_type_icon = "👤" if node_details["node_type"] == "user" else "🤖"
+        content_preview = (
+            node_details["content"][:100] + "..."
+            if len(node_details["content"]) > 100
+            else node_details["content"]
+        )
+
         console.print(f"\n[yellow]📄 Node {node_id} Details:[/yellow]")
         console.print(f"Type: {node_type_icon} {node_details['node_type']}")
         console.print(f"Timestamp: {node_details['timestamp']}")
@@ -1399,10 +1689,11 @@ async def _remove_node(
 
         # Confirmation unless --force is used
         if not force:
-            console.print(f"\n[red]⚠️  WARNING: This will permanently delete node {node_id} from the conversation.[/red]")
+            console.print(
+                f"\n[red]⚠️  WARNING: This will permanently delete node {node_id} from the conversation.[/red]"
+            )
             response = typer.prompt(
-                "Are you sure you want to remove this node? (yes/no)",
-                type=str
+                "Are you sure you want to remove this node? (yes/no)", type=str
             )
             if response.lower() not in ["yes", "y"]:
                 console.print("[yellow]Operation cancelled.[/yellow]")
@@ -1410,7 +1701,7 @@ async def _remove_node(
 
         # Remove the node
         success = await manager.remove_node(node_id, full_conversation_id)
-        
+
         if success:
             console.print(
                 f"[green]✅ Successfully removed node {node_id} from conversation {full_conversation_id[:8]}...[/green]"
@@ -1422,6 +1713,7 @@ async def _remove_node(
 
     except Exception as e:
         console.print(f"[red]❌ Error: {e}[/red]")
+
 
 @app.command()
 def search(
