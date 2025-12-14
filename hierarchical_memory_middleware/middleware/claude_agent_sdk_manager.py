@@ -47,6 +47,7 @@ class ToolResultEvent:
     content: str
     is_error: bool = False
 
+
 from ..config import Config
 from ..storage import DuckDBStorage
 from ..compression import TfidfCompressor, CompressionManager
@@ -87,7 +88,7 @@ class ClaudeAgentSDKConversationManager:
             storage: Optional storage instance (creates new if not provided)
             allowed_tools: List of allowed tools for the agent (default: memory tools only)
             permission_mode: Permission mode for tool execution
-                - "default": Requires approval for each tool use
+                - "default": SDK handles permissions (some tools may be blocked)
                 - "acceptEdits": Auto-approve file edits
                 - "bypassPermissions": No prompts (for automation)
             enable_memory_tools: Whether to enable memory tools via stdio subprocess (default: True)
