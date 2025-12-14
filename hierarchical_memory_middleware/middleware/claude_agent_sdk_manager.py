@@ -480,7 +480,9 @@ class ClaudeAgentSDKConversationManager:
         """
         base_prompt = """You are a helpful AI assistant with access to conversation memory.
 
-You have access to the conversation history below, organized hierarchically:
+You are running within a hierarchical memory system. Only recent messages are shown in full detail - older messages are progressively compressed into summaries, meta-summaries, and archived context. Use the memory tools (search_memory, expand_node, get_recent_nodes) when you need to recall specific details from earlier in the conversation.
+
+The conversation history below is organized hierarchically:
 - ARCHIVED CONTEXT: Very old conversations, highly compressed
 - META SUMMARIES: Groups of related conversations, summarized by topic
 - CONVERSATION SUMMARIES: Recent conversations in summary form
