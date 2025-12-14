@@ -520,7 +520,7 @@ class ClaudeAgentSDKConversationManager:
             # No conversation or user message to save
             return
 
-        logger.info(f"Saving partial response ({len(partial_response)} chars)")
+        logger.debug(f"Saving partial response ({len(partial_response)} chars)")
 
         # Save the user message
         await self.storage.save_conversation_node(
