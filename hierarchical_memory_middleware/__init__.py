@@ -8,6 +8,12 @@ Supports multiple LLM providers:
 - Claude Agent SDK (recommended): Uses Claude Pro/Max subscription via CLI auth
 - Anthropic API: Direct Claude API access
 - OpenAI, Gemini, Moonshot, DeepSeek, Together: Various providers via API
+
+Features:
+- Hierarchical compression (FULL -> SUMMARY -> META -> ARCHIVE)
+- Semantic search via DuckDB VSS (requires [embeddings] extra)
+- Keyword and hybrid search modes
+- System prompt / scratchpad persistence
 """
 
 __version__ = "0.1.0"
@@ -30,6 +36,25 @@ from .models import (
     ModelProvider,
     ModelConfig,
 )
+
+# Optional embeddings support (requires [embeddings] extra)
+try:
+    from .embeddings import (
+        get_embedder,
+        get_embedding_dimension,
+        is_embeddings_available,
+        EmbeddingModel,
+        Embedder,
+    )
+    _EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    _EMBEDDINGS_AVAILABLE = False
+    # Define stubs for type hints
+    get_embedder = None
+    get_embedding_dimension = None
+    is_embeddings_available = lambda: False
+    EmbeddingModel = None
+    Embedder = None
 
 __all__ = [
     # Configuration
@@ -55,6 +80,12 @@ __all__ = [
     "NodeType",
     "CompressionResult",
     "SearchResult",
+    # Embeddings (optional)
+    "get_embedder",
+    "get_embedding_dimension",
+    "is_embeddings_available",
+    "EmbeddingModel",
+    "Embedder",
     # Version
     "__version__",
 ]

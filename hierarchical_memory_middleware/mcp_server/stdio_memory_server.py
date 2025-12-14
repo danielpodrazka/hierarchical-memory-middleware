@@ -79,7 +79,11 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             return {"error": str(e)}
 
     @mcp.tool()
-    async def search_memory(query: str, limit: int = 10) -> Dict[str, Any]:
+    async def search_memory(
+        query: str,
+        limit: int = 10,
+        mode: str = "hybrid",
+    ) -> Dict[str, Any]:
         """Search conversation history for specific content.
 
         Use this tool to find past messages or topics discussed earlier
@@ -88,20 +92,37 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
         Args:
             query: Text to search for in the conversation history
             limit: Maximum number of results to return (default: 10)
+            mode: Search mode - "keyword" (exact match), "semantic" (meaning-based),
+                  or "hybrid" (combines both, default)
 
         Returns:
             List of matching messages with relevance scores
         """
         try:
-            results = await storage.search_nodes(
-                conversation_id=conversation_id,
-                query=query,
-                limit=limit,
-            )
+            # Choose search method based on mode
+            if mode == "semantic":
+                results = await storage.search_nodes_semantic(
+                    conversation_id=conversation_id,
+                    query=query,
+                    limit=limit,
+                )
+            elif mode == "hybrid":
+                results = await storage.search_nodes_hybrid(
+                    conversation_id=conversation_id,
+                    query=query,
+                    limit=limit,
+                )
+            else:  # keyword (default fallback)
+                results = await storage.search_nodes(
+                    conversation_id=conversation_id,
+                    query=query,
+                    limit=limit,
+                )
 
             return {
                 "success": True,
                 "query": query,
+                "mode": mode,
                 "count": len(results),
                 "results": [
                     {
@@ -269,6 +290,32 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             }
         except Exception as e:
             logger.error(f"Error appending to system prompt: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def backfill_embeddings() -> Dict[str, Any]:
+        """Generate embeddings for all messages that don't have them yet.
+
+        This enables semantic search by creating vector embeddings for
+        conversation history. Run this once to enable semantic search
+        on existing conversations.
+
+        Note: Requires the embeddings optional dependency to be installed:
+        pip install 'hierarchical-memory-middleware[embeddings]'
+
+        Returns:
+            Number of messages updated with embeddings
+        """
+        try:
+            updated_count = await storage.backfill_embeddings(conversation_id)
+            return {
+                "success": True,
+                "conversation_id": conversation_id,
+                "embeddings_generated": updated_count,
+                "message": f"Generated embeddings for {updated_count} messages",
+            }
+        except Exception as e:
+            logger.error(f"Error backfilling embeddings: {e}")
             return {"error": str(e)}
 
     @mcp.tool()

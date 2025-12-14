@@ -1,8 +1,9 @@
 """DuckDB storage layer for hierarchical memory system."""
 
 import json
+import logging
 import re
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Literal
 import duckdb
 from contextlib import contextmanager
 from .db_utils import get_db_connection
@@ -15,22 +16,38 @@ from .models import (
 )
 from .db_utils import _init_schema
 
+logger = logging.getLogger(__name__)
+
+# Type alias for search modes
+SearchMode = Literal["keyword", "semantic", "hybrid"]
+
 
 class DuckDBStorage:
     """DuckDB storage implementation for conversation nodes."""
 
-    def __init__(self, db_path: str):
-        """Initialize storage with database path."""
+    def __init__(self, db_path: str, enable_semantic_search: bool = True):
+        """Initialize storage with database path.
+
+        Args:
+            db_path: Path to the DuckDB database file, or ":memory:" for in-memory
+            enable_semantic_search: Whether to enable semantic search (requires embeddings deps)
+        """
         self.db_path = db_path
         self._is_memory_db = db_path == ":memory:"
         self._persistent_conn = None
+        self._vss_loaded = False
+        self._embedder = None
+        self._enable_semantic_search = enable_semantic_search
 
         if self._is_memory_db:
             self._persistent_conn = duckdb.connect(db_path)
             _init_schema(self._persistent_conn)
+            if enable_semantic_search:
+                self._init_vss(self._persistent_conn)
         else:
             with get_db_connection(self.db_path, init_schema=True) as conn:
-                pass  # Schema initialization happens in get_db_connection
+                if enable_semantic_search:
+                    self._init_vss(conn)
 
     @contextmanager
     def _get_connection(self):
@@ -48,6 +65,100 @@ class DuckDBStorage:
         if self._persistent_conn:
             self._persistent_conn.close()
             self._persistent_conn = None
+
+    def _init_vss(self, conn: duckdb.DuckDBPyConnection) -> None:
+        """Initialize VSS extension for vector similarity search.
+
+        This loads the DuckDB VSS extension which enables HNSW indexes
+        for efficient approximate nearest neighbor search.
+        """
+        if self._vss_loaded:
+            return
+
+        try:
+            conn.execute("INSTALL vss")
+            conn.execute("LOAD vss")
+            self._vss_loaded = True
+            logger.debug("VSS extension loaded successfully")
+        except Exception as e:
+            logger.warning(f"Failed to load VSS extension: {e}. Semantic search will use brute-force.")
+            self._vss_loaded = False
+
+    def _get_embedder(self):
+        """Get or create the embedder instance (lazy initialization)."""
+        if self._embedder is None:
+            try:
+                from .embeddings import get_embedder, is_embeddings_available
+
+                if not is_embeddings_available():
+                    logger.warning(
+                        "Embeddings dependencies not available. "
+                        "Install with: pip install 'hierarchical-memory-middleware[embeddings]'"
+                    )
+                    return None
+
+                self._embedder = get_embedder()
+                logger.debug(f"Embedder initialized: {self._embedder.model.value}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize embedder: {e}")
+                return None
+
+        return self._embedder
+
+    def _ensure_vss_loaded(self, conn: duckdb.DuckDBPyConnection) -> bool:
+        """Ensure VSS is loaded for the given connection."""
+        if not self._vss_loaded:
+            self._init_vss(conn)
+        return self._vss_loaded
+
+    async def generate_embedding(self, text: str) -> Optional[List[float]]:
+        """Generate embedding for a text string.
+
+        Args:
+            text: The text to embed
+
+        Returns:
+            List of floats representing the embedding, or None if unavailable
+        """
+        embedder = self._get_embedder()
+        if embedder is None:
+            return None
+
+        try:
+            # Truncate very long texts to avoid model limits
+            # Most embedding models handle ~512 tokens well
+            max_chars = 8000  # ~2000 tokens for typical text
+            if len(text) > max_chars:
+                text = text[:max_chars]
+
+            return embedder.embed(text)
+        except Exception as e:
+            logger.warning(f"Failed to generate embedding: {e}")
+            return None
+
+    async def generate_embeddings_batch(
+        self, texts: List[str]
+    ) -> List[Optional[List[float]]]:
+        """Generate embeddings for multiple texts efficiently.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embeddings (or None for failed ones)
+        """
+        embedder = self._get_embedder()
+        if embedder is None:
+            return [None] * len(texts)
+
+        try:
+            # Truncate long texts
+            max_chars = 8000
+            truncated = [t[:max_chars] if len(t) > max_chars else t for t in texts]
+            return embedder.embed_batch(truncated)
+        except Exception as e:
+            logger.warning(f"Failed to generate batch embeddings: {e}")
+            return [None] * len(texts)
 
     async def get_conversation_nodes(
         self,
@@ -111,13 +222,37 @@ class DuckDBStorage:
         ai_components: Optional[Dict[str, Any]] = None,
         topics: Optional[List[str]] = None,
         relates_to_node_id: Optional[int] = None,
+        generate_embedding: bool = False,
     ) -> ConversationNode:
-        """Save a conversation node and return the created node."""
+        """Save a conversation node and return the created node.
+
+        Args:
+            conversation_id: ID of the conversation
+            node_type: Type of node (USER or AI)
+            content: The message content
+            tokens_used: Optional token count
+            ai_components: Optional AI response components
+            topics: Optional list of topics
+            relates_to_node_id: Optional reference to related node
+            generate_embedding: If True, generate embedding for semantic search (slower)
+
+        Returns:
+            The created ConversationNode
+        """
         import json
         from datetime import datetime
 
         # Ensure conversation exists
         await self._ensure_conversation_exists(conversation_id)
+
+        # Optionally generate embedding
+        embedding = None
+        embedding_sql = "NULL"
+        if generate_embedding and self._enable_semantic_search:
+            embedding = await self.generate_embedding(content)
+            if embedding:
+                embedding_dim = len(embedding)
+                embedding_sql = f"[{', '.join(str(x) for x in embedding)}]::FLOAT[{embedding_dim}]"
 
         with self._get_connection() as conn:
             # Get the next sequence number for this conversation
@@ -137,13 +272,13 @@ class DuckDBStorage:
             # Calculate line count
             line_count = len(content.split("\n"))
 
-            # Insert the new node
+            # Insert the new node (with embedding if generated)
             conn.execute(
-                """
+                f"""
                 INSERT INTO nodes (
                     node_id, conversation_id, node_type, content, timestamp, sequence_number,
-                    line_count, level, tokens_used, ai_components, topics, relates_to_node_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    line_count, level, tokens_used, ai_components, topics, relates_to_node_id, embedding
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {embedding_sql})
                 """,
                 (
                     node_id,
@@ -405,6 +540,279 @@ class DuckDBStorage:
                     break
 
             return search_results
+
+    async def search_nodes_semantic(
+        self,
+        conversation_id: str,
+        query: str,
+        limit: int = 10,
+        similarity_threshold: float = 0.3,
+    ) -> List[SearchResult]:
+        """Semantic search across nodes using vector similarity.
+
+        Args:
+            conversation_id: The conversation to search within
+            query: Natural language query
+            limit: Maximum number of results
+            similarity_threshold: Minimum cosine similarity (0-1) for results
+
+        Returns:
+            List of SearchResult objects sorted by relevance
+        """
+        # Generate embedding for the query
+        query_embedding = await self.generate_embedding(query)
+        if query_embedding is None:
+            logger.warning("Could not generate query embedding, falling back to keyword search")
+            return await self.search_nodes(conversation_id, query, limit)
+
+        with self._get_connection() as conn:
+            # Ensure VSS is loaded
+            self._ensure_vss_loaded(conn)
+
+            # Get embedding dimension
+            embedding_dim = len(query_embedding)
+
+            # Convert query embedding to DuckDB array format with fixed size
+            query_array = f"[{', '.join(str(x) for x in query_embedding)}]::FLOAT[{embedding_dim}]"
+
+            # First, get all nodes with embeddings and compute similarity in Python
+            # (DuckDB's array_cosine_similarity requires both arrays to have same fixed size)
+            result = conn.execute(
+                """
+                SELECT
+                    node_id, conversation_id, node_type, content, timestamp,
+                    sequence_number, line_count, level, summary, summary_metadata,
+                    parent_summary_node_id, tokens_used, expandable,
+                    ai_components, topics, embedding, relates_to_node_id
+                FROM nodes
+                WHERE conversation_id = ?
+                    AND embedding IS NOT NULL
+                """,
+                (conversation_id,),
+            )
+
+            nodes = self._rows_to_nodes(result)
+
+            # Calculate cosine similarity for each node
+            import math
+
+            def cosine_similarity(a: List[float], b: List[float]) -> float:
+                """Compute cosine similarity between two vectors."""
+                if len(a) != len(b):
+                    return 0.0
+                dot = sum(x * y for x, y in zip(a, b))
+                norm_a = math.sqrt(sum(x * x for x in a))
+                norm_b = math.sqrt(sum(x * x for x in b))
+                if norm_a == 0 or norm_b == 0:
+                    return 0.0
+                return dot / (norm_a * norm_b)
+
+            # Score all nodes
+            scored_nodes = []
+            for node in nodes:
+                if node.embedding and len(node.embedding) == embedding_dim:
+                    similarity = cosine_similarity(query_embedding, node.embedding)
+                    if similarity >= similarity_threshold:
+                        scored_nodes.append((node, similarity))
+
+            # Sort by similarity descending
+            scored_nodes.sort(key=lambda x: x[1], reverse=True)
+
+            # Build search results
+            search_results = []
+            for node, similarity in scored_nodes[:limit]:
+                search_results.append(
+                    SearchResult(
+                        node=node,
+                        relevance_score=float(similarity),
+                        match_type="semantic",
+                        matched_text=query,
+                    )
+                )
+
+            return search_results
+
+    async def search_nodes_hybrid(
+        self,
+        conversation_id: str,
+        query: str,
+        limit: int = 10,
+        keyword_weight: float = 0.4,
+        semantic_weight: float = 0.6,
+    ) -> List[SearchResult]:
+        """Hybrid search combining keyword and semantic matching.
+
+        Uses reciprocal rank fusion to combine results from both methods.
+
+        Args:
+            conversation_id: The conversation to search within
+            query: Natural language query
+            limit: Maximum number of results
+            keyword_weight: Weight for keyword search results (0-1)
+            semantic_weight: Weight for semantic search results (0-1)
+
+        Returns:
+            List of SearchResult objects sorted by combined relevance
+        """
+        # Run both searches in parallel conceptually (but sequentially for simplicity)
+        keyword_results = await self.search_nodes(conversation_id, query, limit * 2)
+        semantic_results = await self.search_nodes_semantic(
+            conversation_id, query, limit * 2
+        )
+
+        # Build score maps using reciprocal rank fusion
+        # RRF score = sum(1 / (k + rank)) where k is typically 60
+        k = 60
+        node_scores: Dict[int, Dict[str, Any]] = {}
+
+        # Score keyword results
+        for rank, result in enumerate(keyword_results):
+            node_id = result.node.node_id
+            rrf_score = keyword_weight * (1 / (k + rank + 1))
+            if node_id not in node_scores:
+                node_scores[node_id] = {
+                    "node": result.node,
+                    "score": 0.0,
+                    "match_types": [],
+                    "keyword_score": result.relevance_score,
+                    "semantic_score": 0.0,
+                }
+            node_scores[node_id]["score"] += rrf_score
+            node_scores[node_id]["match_types"].append("keyword")
+
+        # Score semantic results
+        for rank, result in enumerate(semantic_results):
+            node_id = result.node.node_id
+            rrf_score = semantic_weight * (1 / (k + rank + 1))
+            if node_id not in node_scores:
+                node_scores[node_id] = {
+                    "node": result.node,
+                    "score": 0.0,
+                    "match_types": [],
+                    "keyword_score": 0.0,
+                    "semantic_score": result.relevance_score,
+                }
+            node_scores[node_id]["score"] += rrf_score
+            node_scores[node_id]["semantic_score"] = result.relevance_score
+            if "semantic" not in node_scores[node_id]["match_types"]:
+                node_scores[node_id]["match_types"].append("semantic")
+
+        # Sort by combined score and take top results
+        sorted_results = sorted(
+            node_scores.values(), key=lambda x: x["score"], reverse=True
+        )[:limit]
+
+        # Convert to SearchResult objects
+        search_results = []
+        for item in sorted_results:
+            match_type = "+".join(item["match_types"])
+            search_results.append(
+                SearchResult(
+                    node=item["node"],
+                    relevance_score=item["score"],
+                    match_type=match_type,
+                    matched_text=query,
+                )
+            )
+
+        return search_results
+
+    async def update_node_embedding(
+        self,
+        node_id: int,
+        conversation_id: str,
+        embedding: Optional[List[float]] = None,
+    ) -> bool:
+        """Update the embedding for a specific node.
+
+        If embedding is None, generates a new embedding from the node's content.
+
+        Args:
+            node_id: The node to update
+            conversation_id: The conversation the node belongs to
+            embedding: Optional pre-computed embedding
+
+        Returns:
+            True if successful
+        """
+        if embedding is None:
+            # Fetch node content and generate embedding
+            node = await self.get_node(node_id, conversation_id)
+            if node is None:
+                return False
+
+            # Use summary if available, otherwise content
+            text = node.summary if node.summary else node.content
+            embedding = await self.generate_embedding(text)
+
+            if embedding is None:
+                return False
+
+        with self._get_connection() as conn:
+            embedding_dim = len(embedding)
+            embedding_str = f"[{', '.join(str(x) for x in embedding)}]::FLOAT[{embedding_dim}]"
+
+            conn.execute(
+                f"""
+                UPDATE nodes
+                SET embedding = {embedding_str}
+                WHERE node_id = ? AND conversation_id = ?
+                """,
+                (node_id, conversation_id),
+            )
+            return True
+
+    async def backfill_embeddings(
+        self,
+        conversation_id: str,
+        batch_size: int = 50,
+    ) -> int:
+        """Generate embeddings for all nodes that don't have them.
+
+        Args:
+            conversation_id: The conversation to backfill
+            batch_size: Number of nodes to process at once
+
+        Returns:
+            Number of nodes updated
+        """
+        updated_count = 0
+
+        with self._get_connection() as conn:
+            # Get nodes without embeddings
+            result = conn.execute(
+                """
+                SELECT node_id, content, summary
+                FROM nodes
+                WHERE conversation_id = ?
+                    AND embedding IS NULL
+                ORDER BY sequence_number
+                """,
+                (conversation_id,),
+            )
+            rows = result.fetchall()
+
+            if not rows:
+                return 0
+
+            # Process in batches
+            for i in range(0, len(rows), batch_size):
+                batch = rows[i : i + batch_size]
+                node_ids = [row[0] for row in batch]
+                texts = [row[2] if row[2] else row[1] for row in batch]  # summary or content
+
+                embeddings = await self.generate_embeddings_batch(texts)
+
+                # Update each node
+                for node_id, embedding in zip(node_ids, embeddings):
+                    if embedding is not None:
+                        await self.update_node_embedding(
+                            node_id, conversation_id, embedding
+                        )
+                        updated_count += 1
+
+        logger.info(f"Backfilled {updated_count} embeddings for conversation {conversation_id}")
+        return updated_count
 
     async def conversation_exists(self, conversation_id: str) -> bool:
         """Check if a conversation exists."""
