@@ -9,7 +9,17 @@ system.
 import asyncio
 import json
 import logging
+import sys
 from typing import Optional, List, Dict, Any, AsyncIterator
+
+from claude_agent_sdk import (
+    query,
+    ClaudeAgentOptions,
+    AssistantMessage,
+    ResultMessage,
+    TextBlock,
+)
+from claude_agent_sdk.types import StreamEvent
 
 from ..config import Config
 from ..storage import DuckDBStorage
@@ -97,14 +107,6 @@ class ClaudeAgentSDKConversationManager:
         # Track AI view for debugging
         self._last_ai_view_data = None
 
-        # Lazy import of Claude Agent SDK
-        self._sdk_imported = False
-        self._query = None
-        self._ClaudeAgentOptions = None
-        self._AssistantMessage = None
-        self._ResultMessage = None
-        self._TextBlock = None
-
         # Use subscription mode (clears API key to force OAuth)
         self.use_subscription = config.agent_use_subscription
 
@@ -122,8 +124,6 @@ class ClaudeAgentSDKConversationManager:
         Returns:
             Configured ClaudeAgentOptions
         """
-        self._ensure_sdk_imported()
-
         # Build environment overrides
         env = {}
         if self.use_subscription:
@@ -166,42 +166,16 @@ class ClaudeAgentSDKConversationManager:
             ]
             allowed_tools.extend(memory_tools)
 
-        return self._ClaudeAgentOptions(
+        return ClaudeAgentOptions(
             allowed_tools=allowed_tools if allowed_tools else None,
             permission_mode=self.permission_mode,
             system_prompt=system_prompt,
             model=self.model_config.model_name,
             env=env,
             mcp_servers=mcp_servers if mcp_servers else None,
+            output_format="stream-json",
+            include_partial_messages=True,
         )
-
-    def _ensure_sdk_imported(self) -> None:
-        """Lazily import Claude Agent SDK modules."""
-        if self._sdk_imported:
-            return
-
-        try:
-            from claude_agent_sdk import (
-                query,
-                ClaudeAgentOptions,
-                AssistantMessage,
-                ResultMessage,
-                TextBlock,
-            )
-
-            self._query = query
-            self._ClaudeAgentOptions = ClaudeAgentOptions
-            self._AssistantMessage = AssistantMessage
-            self._ResultMessage = ResultMessage
-            self._TextBlock = TextBlock
-            self._sdk_imported = True
-            logger.debug("Claude Agent SDK imported successfully")
-        except ImportError as e:
-            raise ImportError(
-                "Claude Agent SDK is not installed. "
-                "Install it with: pip install claude-agent-sdk\n"
-                "Also ensure Claude CLI is installed and authenticated."
-            ) from e
 
     async def start_conversation(
         self, conversation_id: Optional[str] = None, name: Optional[str] = None
@@ -298,8 +272,6 @@ class ClaudeAgentSDKConversationManager:
         if not self.conversation_id:
             raise ValueError("No active conversation. Call start_conversation() first.")
 
-        self._ensure_sdk_imported()
-
         # Clear tool tracking
         self._current_tool_calls = []
         self._current_tool_results = []
@@ -317,12 +289,12 @@ class ClaudeAgentSDKConversationManager:
         full_response = ""
 
         try:
-            async for message in self._query(prompt=user_message, options=options):
-                if isinstance(message, self._AssistantMessage):
+            async for message in query(prompt=user_message, options=options):
+                if isinstance(message, AssistantMessage):
                     for block in message.content:
-                        if isinstance(block, self._TextBlock):
+                        if isinstance(block, TextBlock):
                             full_response += block.text
-                elif isinstance(message, self._ResultMessage):
+                elif isinstance(message, ResultMessage):
                     logger.debug(
                         f"Query completed: duration={message.duration_ms}ms, "
                         f"cost=${message.total_cost_usd}"
@@ -366,8 +338,6 @@ class ClaudeAgentSDKConversationManager:
         if not self.conversation_id:
             raise ValueError("No active conversation. Call start_conversation() first.")
 
-        self._ensure_sdk_imported()
-
         # Clear tool tracking
         self._current_tool_calls = []
         self._current_tool_results = []
@@ -385,14 +355,27 @@ class ClaudeAgentSDKConversationManager:
         full_response = ""
 
         try:
-            async for message in self._query(prompt=user_message, options=options):
-                if isinstance(message, self._AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, self._TextBlock):
-                            chunk = block.text
-                            full_response += chunk
-                            yield chunk
-                elif isinstance(message, self._ResultMessage):
+            async for message in query(prompt=user_message, options=options):
+                # Handle streaming events (partial messages)
+                if isinstance(message, StreamEvent):
+                    event = message.event
+                    if event.get("type") == "content_block_delta":
+                        delta = event.get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            chunk = delta.get("text", "")
+                            if chunk:
+                                full_response += chunk
+                                yield chunk
+                # Handle complete assistant messages (fallback)
+                elif isinstance(message, AssistantMessage):
+                    # Only use if we haven't been streaming
+                    if not full_response:
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                chunk = block.text
+                                full_response += chunk
+                                yield chunk
+                elif isinstance(message, ResultMessage):
                     logger.debug(
                         f"Query completed: duration={message.duration_ms}ms, "
                         f"cost=${message.total_cost_usd}"
