@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -312,7 +314,7 @@ async def _chat_session(
     if dangerously_skip_permissions:
         console.print("[bold red]⚠️  DANGER: All permissions bypassed![/bold red]")
     if agentic:
-        console.print("[bold cyan]🤖 AGENTIC MODE: AI will continue until done or interrupted (Ctrl+C)[/bold cyan]")
+        console.print("[bold cyan]🤖 AGENTIC MODE: AI continues until done. Ctrl+C to interrupt, Ctrl+C×2 to quit[/bold cyan]")
     console.print(f"🔗 Recent nodes limit: {config.recent_node_limit}")
     console.print(f"📈 Summary threshold: {config.summary_threshold}")
     console.print(f"⚡ Streaming: {'Enabled' if stream else 'Disabled'}")
@@ -455,6 +457,39 @@ async def _chat_session(
         yielded_to_human = True  # Start by waiting for user input
         interrupted = False
 
+        # Setup signal handler for Ctrl+C in agentic mode
+        def handle_sigint(signum, frame):
+            nonlocal interrupted, yielded_to_human
+            if agentic:
+                interrupted = True
+                yielded_to_human = True
+                console.print("\n[yellow]⏸️  Ctrl+C: Interrupting... (press again quickly to quit)[/yellow]")
+            else:
+                raise KeyboardInterrupt()
+
+        # Track rapid Ctrl+C for force quit
+        last_sigint_time = [0.0]  # Use list to allow modification in closure
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        def handle_sigint_with_force_quit(signum, frame):
+            nonlocal interrupted, yielded_to_human
+            current_time = time.time()
+            # If Ctrl+C pressed twice within 1 second, force quit
+            if current_time - last_sigint_time[0] < 1.0:
+                console.print("\n[red]👋 Force quit[/red]")
+                sys.exit(0)
+            last_sigint_time[0] = current_time
+
+            if agentic:
+                interrupted = True
+                yielded_to_human = True
+                console.print("\n[yellow]⏸️  Interrupted - waiting for your input (Ctrl+C again to quit)[/yellow]")
+            else:
+                console.print("\n[yellow]👋 Chat interrupted by user[/yellow]")
+                raise KeyboardInterrupt()
+
+        signal.signal(signal.SIGINT, handle_sigint_with_force_quit)
+
         while True:
             try:
                 # Determine if we should auto-continue or wait for human input
@@ -466,7 +501,15 @@ async def _chat_session(
                     # Wait for human input
                     yielded_to_human = False  # Reset for next iteration
                     interrupted = False
-                    user_input = typer.prompt("👤 You", type=str).strip()
+                    try:
+                        user_input = typer.prompt("👤 You", type=str).strip()
+                    except KeyboardInterrupt:
+                        # Handle Ctrl+C during input prompt - in agentic mode, just continue
+                        console.print()  # New line after ^C
+                        if agentic:
+                            continue
+                        else:
+                            break
 
                 if not user_input:
                     continue
@@ -487,6 +530,7 @@ async def _chat_session(
                     response_chunks = []
                     is_agent_sdk = isinstance(manager, ClaudeAgentSDKConversationManager)
                     pending_tools = {}  # Track tool_id -> tool_name for matching results
+                    stream_interrupted = False
 
                     # Use tool events only for Agent SDK manager
                     if is_agent_sdk:
@@ -494,51 +538,81 @@ async def _chat_session(
                     else:
                         stream_iter = manager.chat_stream(user_input)
 
-                    async for event in stream_iter:
-                        if isinstance(event, str):
-                            # Regular text chunk
-                            console.print(event, end="", style="white")
-                            response_chunks.append(event)
-                        elif isinstance(event, ToolCallEvent):
-                            # Track this tool call for later result matching
-                            pending_tools[event.tool_id] = event.tool_name
-                            # Check if this is a yield_to_human call
-                            if event.tool_name == "mcp__memory__yield_to_human":
-                                yielded_to_human = True
-                                reason = event.tool_input.get("reason", "Task complete")
-                                console.print()
-                                console.print(f"  [bold yellow]⏸️  Yielding to human: {reason}[/bold yellow]")
-                            else:
-                                # Display tool call with collapsible style
-                                tool_input_str = json.dumps(event.tool_input, indent=2)
-                                if len(tool_input_str) > 200:
-                                    tool_input_preview = tool_input_str[:200] + "..."
+                    try:
+                        async for event in stream_iter:
+                            # Check if we've been interrupted by signal handler
+                            if interrupted:
+                                stream_interrupted = True
+                                break
+                            if isinstance(event, str):
+                                # Regular text chunk
+                                console.print(event, end="", style="white")
+                                response_chunks.append(event)
+                            elif isinstance(event, ToolCallEvent):
+                                # Track this tool call for later result matching
+                                pending_tools[event.tool_id] = event.tool_name
+                                # Check if this is a yield_to_human call
+                                if event.tool_name == "mcp__memory__yield_to_human":
+                                    yielded_to_human = True
+                                    reason = event.tool_input.get("reason", "Task complete")
+                                    console.print()
+                                    console.print(f"  [bold yellow]⏸️  Yielding to human: {reason}[/bold yellow]")
                                 else:
-                                    tool_input_preview = tool_input_str
+                                    # Display tool call with collapsible style
+                                    tool_input_str = json.dumps(event.tool_input, indent=2)
+                                    if len(tool_input_str) > 200:
+                                        tool_input_preview = tool_input_str[:200] + "..."
+                                    else:
+                                        tool_input_preview = tool_input_str
+                                    console.print()
+                                    console.print(f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]")
+                                    console.print(f"    [dim]{tool_input_preview}[/dim]")
+                            elif isinstance(event, ToolResultEvent):
+                                # Get tool name from pending calls
+                                tool_name = pending_tools.get(event.tool_id, "unknown")
+                                # Skip displaying yield_to_human results (already shown)
+                                if tool_name == "mcp__memory__yield_to_human":
+                                    continue
+                                # Display tool result with tool name
+                                result_preview = event.content[:300] if len(event.content) > 300 else event.content
+                                # Truncate to first few lines
+                                lines = result_preview.split('\n')
+                                if len(lines) > 5:
+                                    result_preview = '\n'.join(lines[:5]) + f"\n    ... ({len(lines)} lines total)"
+                                style = "red" if event.is_error else "dim green"
+                                console.print(f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{result_preview}[/{style}]")
                                 console.print()
-                                console.print(f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]")
-                                console.print(f"    [dim]{tool_input_preview}[/dim]")
-                        elif isinstance(event, ToolResultEvent):
-                            # Get tool name from pending calls
-                            tool_name = pending_tools.get(event.tool_id, "unknown")
-                            # Skip displaying yield_to_human results (already shown)
-                            if tool_name == "mcp__memory__yield_to_human":
-                                continue
-                            # Display tool result with tool name
-                            result_preview = event.content[:300] if len(event.content) > 300 else event.content
-                            # Truncate to first few lines
-                            lines = result_preview.split('\n')
-                            if len(lines) > 5:
-                                result_preview = '\n'.join(lines[:5]) + f"\n    ... ({len(lines)} lines total)"
-                            style = "red" if event.is_error else "dim green"
-                            console.print(f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{result_preview}[/{style}]")
-                            console.print()
+                    except Exception as stream_error:
+                        # Check if this was due to Ctrl+C interrupt (exit code -2 or similar)
+                        error_str = str(stream_error).lower()
+                        if interrupted or "exit code -2" in error_str or "sigint" in error_str:
+                            stream_interrupted = True
+                            # Don't log this as an error - it's expected
+                        else:
+                            # Re-raise unexpected errors
+                            raise
 
                     # Add bottom border
                     console.print()
-                    console.print("└────────────────────────────────────────────────────────────────────────────────┘")
+                    if stream_interrupted:
+                        console.print("└─ [yellow]interrupted[/yellow] ──────────────────────────────────────────────────────────────┘")
+                    else:
+                        console.print("└────────────────────────────────────────────────────────────────────────────────┘")
                     console.print()
                     response = ''.join(response_chunks)
+
+                    # If stream was interrupted, save partial response
+                    if stream_interrupted:
+                        console.print("[dim]📝 Saving partial response...[/dim]")
+                        # Try to save the partial response to storage
+                        try:
+                            await manager.save_partial_response(response)
+                            console.print("[dim]✓ Partial response saved[/dim]")
+                        except AttributeError:
+                            # Manager doesn't support save_partial_response (e.g., non-Agent SDK)
+                            pass
+                        except Exception as e:
+                            logger.debug(f"Failed to save partial response: {e}")
                 else:
                     # Non-streaming mode
                     console.print("[bold green]🤖 Thinking...[/bold green]")
@@ -564,15 +638,11 @@ async def _chat_session(
                     yielded_to_human = True
 
             except KeyboardInterrupt:
-                if agentic and not yielded_to_human:
-                    # In agentic mode, interrupt pauses for human input
-                    console.print("\n[yellow]⏸️  Interrupted - waiting for your input[/yellow]")
-                    interrupted = True
-                    yielded_to_human = True
-                else:
-                    # Normal mode - exit chat
-                    console.print("\n[yellow]👋 Chat interrupted by user[/yellow]")
+                # Signal handler already printed message and set flags
+                if not agentic:
                     break
+                # In agentic mode, signal handler already set interrupted=True, yielded_to_human=True
+                continue
             except Exception as e:
                 console.print(f"[red]❌ Error: {str(e)}[/red]")
                 logger.exception("Chat error")
@@ -584,6 +654,9 @@ async def _chat_session(
         logger.exception("Initialization error")
         sys.exit(1)
     finally:
+        # Restore original signal handler
+        if 'original_handler' in dir():
+            signal.signal(signal.SIGINT, original_handler)
         # Clean up external servers
         mcp_manager.stop_all()
 

@@ -137,6 +137,10 @@ class ClaudeAgentSDKConversationManager:
         # Track AI view for debugging
         self._last_ai_view_data = None
 
+        # Track current streaming state for partial save on interrupt
+        self._current_user_message: Optional[str] = None
+        self._stream_saved: bool = False
+
         # Use subscription mode (clears API key to force OAuth)
         self.use_subscription = config.agent_use_subscription
 
@@ -380,6 +384,10 @@ class ClaudeAgentSDKConversationManager:
         self._current_tool_calls = []
         self._current_tool_results = []
 
+        # Track current user message for potential partial save
+        self._current_user_message = user_message
+        self._stream_saved = False
+
         # Build memory context
         memory_context = await self._build_memory_context()
 
@@ -450,7 +458,13 @@ class ClaudeAgentSDKConversationManager:
                         f"cost=${message.total_cost_usd}"
                     )
         except Exception as e:
-            logger.exception(f"Error during Claude Agent SDK streaming query: {e}")
+            # Check if this is a SIGINT (Ctrl+C) interrupt - exit code -2
+            error_str = str(e)
+            if "exit code -2" in error_str or "exit code: -2" in error_str:
+                # This is expected when user interrupts with Ctrl+C, don't log as error
+                logger.debug(f"Streaming interrupted by user (SIGINT): {e}")
+            else:
+                logger.exception(f"Error during Claude Agent SDK streaming query: {e}")
             raise
 
         # Save nodes after streaming completes
@@ -470,8 +484,61 @@ class ClaudeAgentSDKConversationManager:
             },
         )
 
+        # Mark stream as saved to prevent duplicate saves
+        self._stream_saved = True
+
         # Check and perform compression
         await self._check_and_compress()
+
+    async def save_partial_response(self, partial_response: str) -> None:
+        """Save a partial response when streaming is interrupted.
+
+        This method is called when the user interrupts a streaming response
+        (e.g., with Ctrl+C) to save whatever partial response was collected.
+
+        Args:
+            partial_response: The partial response text collected so far
+        """
+        if self._stream_saved:
+            # Already saved (stream completed normally)
+            return
+
+        if not self.conversation_id or not self._current_user_message:
+            # No conversation or user message to save
+            return
+
+        logger.info(f"Saving partial response ({len(partial_response)} chars)")
+
+        # Save the user message
+        await self.storage.save_conversation_node(
+            conversation_id=self.conversation_id,
+            node_type=NodeType.USER,
+            content=self._current_user_message,
+        )
+
+        # Save the partial AI response (mark it as interrupted)
+        partial_content = partial_response
+        if partial_content:
+            partial_content += "\n\n[Response interrupted by user]"
+        else:
+            partial_content = "[Response interrupted by user before any output]"
+
+        await self.storage.save_conversation_node(
+            conversation_id=self.conversation_id,
+            node_type=NodeType.AI,
+            content=partial_content,
+            ai_components={
+                "tool_calls": self._current_tool_calls,
+                "tool_results": self._current_tool_results,
+                "interrupted": True,
+            },
+        )
+
+        # Mark as saved
+        self._stream_saved = True
+
+        # Clear tracking
+        self._current_user_message = None
 
     async def _build_system_prompt(self, memory_context: str) -> str:
         """Build the system prompt including memory context and user scratchpad.
