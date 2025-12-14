@@ -1,134 +1,283 @@
 # Hierarchical Memory Middleware
 
-**A proof-of-concept AI memory system exploring hierarchical compression for extended conversations. This is experimental middleware that aims to reduce context window limitations through intelligent compression, though it still requires significant work to handle all use cases reliably.**
+**A middleware system enabling infinite AI conversations through intelligent hierarchical compression. Works with your Claude Pro/Max subscription via Claude Agent SDK, or with API credits via PydanticAI.**
 
 ## Overview
 
-The Hierarchical Memory Middleware is a research prototype that addresses context window limitations in AI conversations. Instead of truncating conversation history, it implements a 4-level hierarchical compression system that attempts to preserve access to previous conversation details. While the concept shows promise, the current implementation has limitations, particularly with tool-heavy workflows where a single turn can consume the entire context window.
+Hierarchical Memory Middleware addresses context window limitations by implementing a 4-level hierarchical compression system (FULL → SUMMARY → META → ARCHIVE) that preserves access to previous conversation details. The system automatically compresses older messages while providing MCP tools for the AI to search and expand compressed content when needed.
 
-## Why Explore Hierarchical Memory?
+**Key Features:**
+- **Claude Pro/Max Support**: Use your existing Claude subscription instead of API credits
+- **Automatic Compression**: Older messages are progressively compressed with TF-IDF topic extraction
+- **Memory Tools**: AI can search history, expand compressed nodes, and maintain a scratchpad
+- **Multi-Provider**: Supports Claude, OpenAI, Gemini, Moonshot, DeepSeek, and more
+- **Semantic Search**: Optional embeddings for meaning-based search (sentence-transformers or OpenAI)
 
-### Towards More Automatic AI Memory Management
+## Quick Start
 
-This project explores whether AI memory systems can be made more automatic and transparent, reducing the cognitive overhead that current solutions require from AI agents.
+### Option 1: Claude Agent SDK (Recommended)
 
-**Challenges with Current Approaches:**
-- **Letta/MemGPT**: Agents must actively decide what to remember, search external memory, and manage compression
-- **Mem0**: Background processing with limited real-time access during conversations
-- **RAG Systems**: Vector search with sometimes imprecise relevance matching
-- **Traditional Chat**: Simply truncate or lose history when context limits are reached
+Uses your Claude Pro/Max subscription - no API credits needed:
 
-**Our Experimental Approach: Middleware-Based Compression**
+```bash
+# Ensure Claude CLI is installed and authenticated
+claude --version
+claude login
 
-This system attempts to handle compression and expansion more transparently through middleware:
+# Clone and install
+git clone https://github.com/danielpodrazka/hierarchical-memory-middleware
+cd hierarchical-memory-middleware
+uv sync
+
+# Start chatting!
+uv run python -m hierarchical_memory_middleware.cli chat
+```
+
+### Option 2: API-Based (PydanticAI)
+
+Uses API credits with any supported provider:
+
+```bash
+# Set up API key
+export ANTHROPIC_API_KEY=your_key_here  # or OPENAI_API_KEY, GEMINI_API_KEY, etc.
+
+# Start with a specific model
+uv run python -m hierarchical_memory_middleware.cli chat --model claude-sonnet-4
+```
+
+## How It Works
+
+### Automatic Compression
+
+As your conversation grows, older messages are automatically compressed:
 
 ```
-🧠 Agent: "Let me check our architecture discussion"
-🔧 System: Searches compressed summaries → Agent can expand specific nodes if needed
-⚡ Goal: Reduce memory management overhead while maintaining access to details
+🟢 FULL (Recent 10 nodes) - Complete content preserved
+      ↓ compression threshold exceeded
+🟡 SUMMARY - First N words + TF-IDF extracted topics
+      ↓ 50+ summary nodes
+🟠 META - Groups of 20-40 summaries with theme extraction
+      ↓ 200+ meta nodes
+🔴 ARCHIVE - Highly compressed historical context
 ```
 
-### Potential Use Cases (When Working)
+### Memory Tools
 
-**🏗️ Long-Running Technical Projects**
-- Multi-session coding discussions with context preservation
-- Architecture decisions that build on previous conversations
-- Code reviews that reference historical implementations
+The AI has access to MCP tools for navigating compressed history:
 
-**🤝 Personalized AI Assistants**
-- Remembering user preferences and context across sessions
-- Building understanding of user's projects over time
-- Reducing need to re-explain context in each conversation
+- **`search_memory(query)`** - Keyword, semantic, or hybrid search
+- **`expand_node(id)`** - Get full content of any compressed node
+- **`get_memory_stats()`** - View compression statistics
+- **`get_recent_nodes(count)`** - Get recent messages in full detail
+- **`set_system_prompt(content)`** - Persistent scratchpad for notes
+- **`yield_to_human(reason)`** - Signal when human input is needed (agentic mode)
 
-**📊 Research and Analysis**
-- Maintaining context for complex investigations
-- Referencing specific findings from previous sessions
-- Preserving methodologies and interim conclusions
+## Design Philosophy
 
-**🏢 Enterprise AI Applications**
-- Conversation history with audit trails
-- Integration via middleware architecture
-- Scaling conversation storage
+### Why Compression Over Infinite Context?
 
-### Experimental Features
+Rather than relying on ever-larger context windows, HMM takes a different approach: **compress aggressively, but provide tools to drill back down when needed**. This has several advantages:
 
-**🧠 Hierarchical Compression**
-- Recent memories: Full detail preserved
-- Older memories: Intelligent summaries with topic extraction
-- Expandable compression levels when context allows
+1. **Token Efficiency**: Sending 500k tokens of old conversation history is expensive and slow. Compressed summaries + on-demand expansion is far more efficient.
 
-**🔧 MCP Integration**
-- Model Context Protocol (MCP) tools for memory browsing
-- Internal MCP server for memory access
-- Standards-based architecture
+2. **Focused Retrieval**: When searching compressed history, the AI explicitly requests what it needs rather than having everything passively available. This leads to more intentional information retrieval.
 
-## Current Features
+3. **Future-Proof**: Works with any context window size. As models improve, you can adjust compression thresholds without changing the architecture.
 
-- **🧠 Extended Conversations**: Attempts to work around context window limitations through compression
-- **🔍 Memory Access**: Historical conversation details via MCP memory tools
-- **🔌 Multi-Model Support**: Works with Anthropic Claude, OpenAI GPT, Google Gemini, Moonshot, DeepSeek, and more
-- **🛠️ MCP Integration**: Built-in Model Context Protocol server for memory browsing
-- **💾 Persistent Storage**: DuckDB-based storage with conversation history
-- **🔍 Search**: Full-text and regex search across conversation history
+### The "Re-Reading" Pattern
 
-## Tackling Industry-Wide Challenges
+You may notice that when using HMM, the AI tends to re-read files and re-search for information rather than relying on what it "remembers" from earlier in the conversation. This is **intentional and beneficial**:
 
-**Industry Challenge: Tool-Heavy Workflows**
+```
+Traditional approach:  "I remember the file looked like X" → edit → hope it's right
+HMM approach:          Read file → edit with confidence → context compresses away
+```
 
-This project tackles one of the most significant unsolved problems in AI-assisted development: **context window exhaustion in tool-intensive workflows**. This challenge affects all AI coding assistants, including Claude, GPT-4, and others.
+**Why fresh reads are better:**
 
-**Universal Problems We're Addressing:**
-- **Large Codebase Navigation**: When working with repositories >10k lines, AI assistants need to explore many files, read extensive code, and make numerous changes
-- **Tool Call Overhead**: Complex development workflows (using MCP tools like text editors, file browsers, test runners) can consume entire context windows in a single turn
-- **Context Window Saturation**: Current AI systems lack sophisticated context management for tool-heavy scenarios
-- **Memory Fragmentation**: No existing solutions effectively compress and recall technical conversation history
+- **Code may have changed** - If edits were made earlier, "memory" of the file might be stale
+- **Summaries lose precision** - A summary might say "handles authentication" but miss exact line numbers or variable names needed for surgical edits
+- **Avoids hallucination risk** - Relying on compressed context means relying on reconstruction of what the code *might* look like
+- **Matches developer workflow** - Good developers don't code from memory; they open files, look at them, then edit
 
-**Why This Matters:**
-These are fundamental challenges facing the entire AI coding assistant ecosystem. Every Claude user working with large codebases hits these same walls.
+### Trade-offs
 
-### Our Research Approach
+| Aspect | HMM Approach | Large Context Window |
+|--------|--------------|---------------------|
+| **Token cost** | Lower (compressed + on-demand) | Higher (everything in context) |
+| **Latency** | More tool calls, but smaller payloads | Fewer calls, but larger payloads |
+| **Accuracy** | Fresh reads ensure current state | May reference stale information |
+| **Reliability** | Explicit retrieval = intentional | Passive context = may miss details |
 
-This middleware explores novel solutions to these industry-wide problems:
+The key insight: **a limitation (needing to re-read) actually enforces a better practice**. By not having infinite passive memory, the AI is forced to verify its assumptions against the actual current state of the codebase.
 
-| Challenge | Industry Status | Our Experimental Approach |
-|-----------|----------------|---------------------------|
-| **Cross-Turn Memory** | Lost when context fills | Hierarchical compression with MCP expansion |
-| **Tool Call Management** | No established patterns | Middleware-based optimization (research stage) |
-| **Large Codebase Work** | Frequent context resets | Persistent memory with intelligent summarization |
-| **Context Optimization** | Manual chunking/summarization | Automatic compression with expansion on demand |
-| **Development Continuity** | Restart conversations frequently | Cross-session memory preservation |
+## Agentic Mode
 
-**Current Status: Proof-of-Concept**
-We're exploring these solutions through experimental middleware. While we've made progress on cross-turn compression and MCP integration, intra-turn optimization for tool-heavy workflows remains an active research area—both for us and the broader AI community.
+Agentic mode allows the AI to work autonomously on multi-step tasks without requiring human input after each response. Instead of stopping after every message, the AI continues working until it either:
+
+1. **Completes the task** - Calls `yield_to_human(reason="Task complete")`
+2. **Needs clarification** - Calls `yield_to_human(reason="Need decision on X")`
+3. **Gets interrupted** - User presses Ctrl+C
+
+### Starting Agentic Mode
+
+```bash
+# Start with --agentic flag
+uv run python -m hierarchical_memory_middleware.cli chat --agentic
+```
+
+### How It Works
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        AGENTIC MODE                              │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  User: "Refactor the authentication module"                      │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │ AI works autonomously...                                    │ │
+│  │                                                             │ │
+│  │  1. Analyzes current code structure                         │ │
+│  │  2. Creates implementation plan                             │ │
+│  │  3. Makes code changes                                      │ │
+│  │  4. Runs tests                                              │ │
+│  │  5. Calls yield_to_human(reason="Refactoring complete")     │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  [System pauses for human review]                                │
+│                                                                  │
+│  User: "Looks good, now add logging"                             │
+│                                                                  │
+│  [AI continues autonomously...]                                  │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### The `yield_to_human` Tool
+
+The AI uses this tool to explicitly pause and request human attention:
+
+```python
+# AI calls this when done or blocked
+yield_to_human(reason="Task complete - all tests passing")
+yield_to_human(reason="Need clarification on error handling approach")
+yield_to_human(reason="Blocked - missing API credentials")
+```
+
+### Interrupt Handling
+
+- **Single Ctrl+C**: Interrupts current AI response, pauses for human input
+- **Double Ctrl+C**: Exits the chat session entirely
+
+### Use Cases
+
+- **Code refactoring**: Let AI work through multiple files without interruption
+- **Multi-step tasks**: Complex operations that require several tool calls
+- **Automated workflows**: Background processing with check-ins
+- **Research tasks**: Deep exploration with periodic status updates
+
+### Python API
+
+```python
+from hierarchical_memory_middleware import Config, create_conversation_manager
+
+# Enable agentic mode via factory function
+manager = create_conversation_manager(
+    config=Config.from_env(),
+    agentic_mode=True  # Enables agentic mode
+)
+```
+
+The `agentic_mode` parameter adds special instructions to the system prompt, teaching the AI to:
+- Work autonomously on multi-step tasks
+- Call `yield_to_human()` when done or blocked
+- Not ask unnecessary clarifying questions
+
+## Features
+
+### Two Conversation Managers
+
+| Feature | Claude Agent SDK Manager | PydanticAI Manager |
+|---------|-------------------------|-------------------|
+| **Authentication** | Claude CLI OAuth | API Keys |
+| **Cost** | Uses Pro/Max subscription | API credits |
+| **Model Names** | `claude-agent-*` | All other models |
+| **Memory Transport** | stdio subprocess | HTTP MCP server |
+| **Best For** | Personal use | Automation, other providers |
+
+### Supported Models
+
+**Claude Agent SDK** (subscription-based):
+- `claude-agent-opus` - Most capable
+- `claude-agent-sonnet` - Balanced (default)
+- `claude-agent-haiku` - Fastest
+
+**API-Based** (via PydanticAI):
+- Anthropic: `claude-sonnet-4`, `claude-3-5-haiku`
+- OpenAI: `gpt-4o`, `gpt-4o-mini`
+- Google: `gemini-2-5-pro`, `gemini-2-5-flash`, `gemini-2-0-flash`
+- Moonshot: `kimi-k2-0711-preview`, `moonshot-v1-128k`
+- DeepSeek: `deepseek-chat`, `deepseek-coder`
+- Together: `llama-3-8b-instruct`, `llama-3-70b-instruct`
+
+### Search Capabilities
+
+Three search modes for finding past conversations:
+
+- **Keyword**: Fast full-text search with regex support
+- **Semantic**: Meaning-based search using embeddings (requires `[embeddings]` extra)
+- **Hybrid**: Combines keyword and semantic for best results
 
 ## Architecture
 
 ### Core Components
 
-1. **Conversation Manager** (`HierarchicalConversationManager`)
-   - Orchestrates conversations with PydanticAI agents
-   - Manages compression triggers and memory integration
-   - Handles tool call tracking and message reconstruction
+```
+hierarchical_memory_middleware/
+├── middleware/                    # Conversation managers
+│   ├── __init__.py               # Factory: create_conversation_manager()
+│   ├── claude_agent_sdk_manager.py  # Uses Claude CLI (Pro/Max subscription)
+│   └── conversation_manager.py    # Uses PydanticAI (API keys)
+├── mcp_server/                   # MCP server implementations
+│   ├── stdio_memory_server.py    # stdio transport for Agent SDK
+│   ├── memory_server.py          # HTTP transport for API models
+│   └── run_server.py             # Standalone server runner
+├── storage.py                    # DuckDB storage with VSS
+├── compression.py                # TF-IDF compression
+├── embeddings.py                 # Semantic search (optional)
+├── models.py                     # Data models & model registry
+├── config.py                     # Configuration management
+├── model_manager.py              # Model validation
+└── cli.py                        # Typer CLI interface
+```
+
+### Component Details
+
+1. **Conversation Managers**
+   - Factory function `create_conversation_manager()` auto-selects based on model name
+   - `ClaudeAgentSDKConversationManager`: Spawns Claude CLI, uses OAuth, memory via stdio MCP
+   - `HierarchicalConversationManager`: Uses PydanticAI, requires API keys, memory via HTTP MCP
 
 2. **Storage Layer** (`DuckDBStorage`)
-   - Persistent storage using DuckDB for high performance
-   - Stores conversation nodes with metadata, compression levels, and AI components
-   - Provides efficient querying and search capabilities
+   - DuckDB with VSS extension for vector similarity search
+   - Stores nodes with: content, summary, compression level, topics, embeddings
+   - Supports keyword, semantic, and hybrid search modes
 
-3. **Hierarchical Compression System** (`AdvancedCompressionManager`)
-   - 4-level compression: FULL → SUMMARY → META → ARCHIVE
-   - Content truncation with TF-IDF topic extraction
-   - Configurable thresholds for compression triggers
+3. **Compression System** (`TfidfCompressor`)
+   - TF-IDF based topic extraction using scikit-learn
+   - Configurable compression: truncation to first N words + topic keywords
+   - Thresholds: summary at 10 nodes, meta at 50, archive at 200
 
-4. **MCP Memory Server** (`MemoryMCPServer`)
-   - Provides memory browsing tools via Model Context Protocol
-   - Tools: `expand_node()`, `find()`, `get_conversation_stats()`, `set_conversation_id()`
-   - Enables AI agents to access historical conversation details
+4. **MCP Memory Server**
+   - `stdio_memory_server.py`: Spawned as subprocess by Claude Agent SDK
+   - `memory_server.py`: HTTP server using FastMCP for API-based models
+   - Tools: expand_node, search_memory, get_memory_stats, get/set_system_prompt, yield_to_human
 
-5. **Model Manager** (`ModelManager`)
-   - Unified interface for multiple LLM providers
-   - Pre-configured model settings and validation
-   - Support for 15+ models across 8 providers
+5. **Model Manager**
+   - Registry of 15+ pre-configured models across 8 providers
+   - Validates API key availability
+   - Distinguishes Claude Agent SDK models from API models
 
 ### Hierarchical Compression Levels
 
@@ -278,53 +427,12 @@ graph TB
     Work -.->|"Response"| User
 ```
 
-## Research Applications & Use Cases
+## Use Cases
 
-### 🔬 Primary Research Areas
-
-**This middleware is designed to advance research in:**
-- **AI Memory Management**: Exploring how hierarchical compression can extend effective conversation length
-- **Tool-Heavy Workflow Optimization**: Investigating solutions to context window exhaustion in complex development tasks
-- **MCP Ecosystem Development**: Contributing tools and patterns for Model Context Protocol adoption
-- **Cross-Session Continuity**: Researching how AI assistants can maintain context across multiple sessions
-
-### 🏗️ Practical Applications
-
-**Current experimental applications include:**
-- **Extended Development Sessions**: Multi-hour coding sessions with large codebases (>10k lines)
-- **Research & Documentation**: Long-form technical discussions that build on previous conversations
-- **Architecture Planning**: Multi-session design discussions that reference previous decisions
-- **Code Review Workflows**: Maintaining context across complex review cycles
-
-**Note on Tool-Heavy Workflows:**
-Complex development work (extensive file editing, large codebase navigation) represents the cutting edge of what's possible with current AI systems. Our research addresses the universal challenge of context window saturation that affects all AI coding assistants.
-
-### 🧪 Comparison with Existing Solutions
-
-**For Production Use Cases:**
-- **Simple conversations** (< 20 exchanges) → Standard Claude/GPT-4 interfaces
-- **Established agent frameworks** → Letta/MemGPT for explicit memory control
-- **Background processing** → Mem0 for offline memory management
-- **Document Q&A** → Traditional RAG with vector search
-
-**For Research & Experimentation:**
-- **Memory system research** → This middleware provides novel hierarchical compression approaches
-- **MCP tool development** → Real-world examples of memory browsing and expansion
-- **Large codebase AI assistance** → Experimental approaches to context management
-
-### 🎯 Vision: The "AI Research Partner"
-
-Our goal is enabling AI that functions as a **persistent research partner** for complex technical work:
-
-```
-👤 "What was our approach to handling state management in the API?"
-🤖 "Let me search our previous architecture discussions..."
-    → 🔍 find("state management API")
-    → 📄 expand_node(89)
-    "In session 3, we decided on Redux with middleware for..."
-```
-
-This vision drives our research into automatic memory management and intelligent context compression.
+- **Long Development Sessions**: Multi-hour coding with context preservation
+- **Multi-Session Projects**: Pick up where you left off across days/weeks
+- **Research & Documentation**: Build on previous technical discussions
+- **Personalized Assistants**: AI that remembers your preferences and context
 
 ## Installation
 
@@ -338,458 +446,146 @@ uv sync
 
 # Or install with pip
 pip install -e .
+
+# Optional: Install embeddings for semantic search
+uv sync --extra embeddings
 ```
-
-## Quick Start
-
-After installation, you can start using the hierarchical memory middleware immediately.
-
-### Option 1: Claude Agent SDK (Recommended - Uses Your Claude Subscription)
-
-The easiest way to get started is with Claude Agent SDK, which uses your Claude Pro/Max subscription instead of API credits:
-
-```bash
-# Ensure Claude CLI is installed and authenticated
-claude --version
-
-# Start an interactive chat session (no external server needed!)
-python -m hierarchical_memory_middleware.cli chat
-```
-
-That's it! Memory tools are built-in via stdio subprocess - no separate MCP server required.
-
-**Requirements:**
-- Claude CLI installed and authenticated (`claude login`)
-- Claude Pro or Max subscription
-
-### Option 2: Standard Mode (Uses API Credits)
-
-For other LLM providers or API-based usage:
-
-1. **Start the MCP server** (required for memory operations):
-
-```bash
-# Start the MCP server
-python hierarchical_memory_middleware/mcp_server/run_server.py
-```
-
-2. **Start an interactive chat session**:
-
-```bash
-# Start with a specific model
-python -m hierarchical_memory_middleware.cli chat --model claude-sonnet-4
-```
-
-This will:
-- Start a conversation with intelligent memory compression
-- Automatically create a conversation database
-- Provide MCP tools for memory browsing
-- Use your configured model
-
-### Your First Conversation
-
-```
-🤖 Welcome to Hierarchical Memory Middleware!
-🧠 Starting experimental conversation with hierarchical compression...
-
-You: Let's discuss the architecture of a web application
-AI: I'd be happy to discuss web application architecture...
-
-# Later in the conversation (if compression is working properly)
-You: What did we say about the database layer earlier?
-AI: Let me search our conversation history...
-    🔍 [Attempting to use MCP tools to find relevant nodes]
-    📄 [Trying to expand compressed memories if context allows]
-    Based on our earlier discussion (if found)...
-```
-
-The system attempts to manage memory automatically through compression, though success varies based on conversation complexity and tool usage patterns.
 
 ## Configuration
 
-### Environment Variables
-
-Create a `.env` file with your API keys:
+### Environment Variables (.env)
 
 ```bash
-# Required: At least one model provider
-ANTHROPIC_API_KEY=your_anthropic_key_here
-OPENAI_API_KEY=your_openai_key_here
-GEMINI_API_KEY=your_gemini_key_here
-MOONSHOT_API_KEY=your_moonshot_key_here
-DEEPSEEK_API_KEY=your_deepseek_key_here
+# Model selection (default: claude-agent-sonnet)
+WORK_MODEL=claude-agent-sonnet
 
-# Optional: Additional providers
-TOGETHER_API_KEY=your_together_key_here
-COHERE_API_KEY=your_cohere_key_here
-MISTRAL_API_KEY=your_mistral_key_here
+# Claude Agent SDK settings (uses Pro/Max subscription)
+AGENT_PERMISSION_MODE=default      # default, acceptEdits, bypassPermissions
+AGENT_USE_SUBSCRIPTION=true        # Use subscription instead of API credits
+
+# API keys (for API-based models only)
+ANTHROPIC_API_KEY=your_key         # For claude-sonnet-4, etc.
+OPENAI_API_KEY=your_key            # For gpt-4o, etc.
+GEMINI_API_KEY=your_key            # For gemini-* models
+MOONSHOT_API_KEY=your_key          # For moonshot/kimi models
+DEEPSEEK_API_KEY=your_key          # For deepseek models
+TOGETHER_API_KEY=your_key          # For llama models via Together
+
+# Compression thresholds
+RECENT_NODE_LIMIT=10               # Nodes kept at FULL level
+SUMMARY_THRESHOLD=20               # When to compress to SUMMARY
+META_SUMMARY_THRESHOLD=50          # When to create META groups
+ARCHIVE_THRESHOLD=200              # When to archive
+
+# Storage
+DB_PATH=./conversations.db
+
+# Logging
+LOG_LEVEL=INFO
+DEBUG_MODE=false
 ```
 
-### Basic Configuration
+### Python Configuration
 
 ```python
-from hierarchical_memory_middleware.config import Config
+from hierarchical_memory_middleware import Config, create_conversation_manager
 
+# Auto-loads from .env
+config = Config.from_env()
+
+# Or configure programmatically
 config = Config(
-    work_model="claude-sonnet-4",           # Main conversation model
-    db_path="./conversations.db",           # Database location
-    recent_node_limit=10,                   # Nodes kept at FULL level
-    mcp_port=8001,                          # MCP server port
-    log_tool_calls=True                     # Enable tool call logging
-)
-```
-
-### Claude Agent SDK Configuration (Recommended)
-
-The Claude Agent SDK is the recommended approach as it uses your Claude Pro/Max subscription:
-
-```python
-from hierarchical_memory_middleware.config import Config
-
-config = Config(
-    work_model="claude-agent-sonnet",       # Use Claude Agent SDK
+    work_model="claude-agent-sonnet",  # Uses Claude subscription
     db_path="./conversations.db",
     recent_node_limit=10,
-    # Claude Agent SDK specific settings
-    agent_permission_mode="default",        # "default", "acceptEdits", or "bypassPermissions"
-    agent_use_subscription=True,            # Use subscription (not API credits)
+    agent_permission_mode="default",
+    agent_use_subscription=True,
 )
-```
 
-**Available Claude Agent SDK models:**
-- `claude-agent-opus` - Most capable, best for complex tasks
-- `claude-agent-sonnet` - Balanced performance (default)
-- `claude-agent-haiku` - Fastest, best for simple tasks
-
-**Environment variables for Claude Agent SDK:**
-```bash
-# In .env file
-WORK_MODEL=claude-agent-sonnet
-AGENT_PERMISSION_MODE=default
-AGENT_USE_SUBSCRIPTION=true
+# Factory auto-selects the right manager based on model name
+manager = create_conversation_manager(config=config)
 ```
 
 ## Usage
 
-### Using Claude Agent SDK (Recommended)
+### CLI Interface (Recommended)
 
-The simplest way to use the middleware with your Claude subscription:
+```bash
+# Start interactive chat with Claude subscription
+uv run python -m hierarchical_memory_middleware.cli chat
+
+# Use a specific model
+uv run python -m hierarchical_memory_middleware.cli chat --model gpt-4o
+
+# Resume a previous conversation
+uv run python -m hierarchical_memory_middleware.cli chat --conversation-id <id>
+```
+
+### Python API
 
 ```python
 import asyncio
-from hierarchical_memory_middleware.middleware import create_conversation_manager
-from hierarchical_memory_middleware.config import Config
+from hierarchical_memory_middleware import Config, create_conversation_manager
 
-async def claude_agent_conversation():
-    # Create config with Claude Agent SDK model
-    config = Config(work_model="claude-agent-sonnet")
-
-    # Factory function auto-selects the right manager
+async def main():
+    config = Config.from_env()  # or Config(work_model="claude-agent-sonnet")
     manager = create_conversation_manager(config=config)
 
-    # Start a new conversation
+    # Start/resume conversation
     conversation_id = await manager.start_conversation()
 
-    # Chat - memory tools are automatically available
-    response = await manager.chat("Hello! Let's discuss quantum computing.")
+    # Chat - memory tools are automatically available to the AI
+    response = await manager.chat("Let's discuss quantum computing.")
     print(response)
 
-    # The AI can use built-in memory tools:
-    # - search_memory(query) - Search conversation history
-    # - expand_node(id) - Get full content of a node
-    # - get_memory_stats() - Get memory statistics
+    # Continue - AI can use memory tools to recall earlier context
     response = await manager.chat("What did we discuss earlier?")
     print(response)
 
-asyncio.run(claude_agent_conversation())
-```
-
-### Basic Conversation (API-based models)
-
-```python
-import asyncio
-from hierarchical_memory_middleware.config import Config
-from hierarchical_memory_middleware.middleware.conversation_manager import HierarchicalConversationManager
-
-async def basic_conversation():
-    config = Config(work_model="claude-sonnet-4")
-    manager = HierarchicalConversationManager(config)
-
-    # Start a new conversation
-    conversation_id = await manager.start_conversation()
-
-    # Chat with experimental memory compression
-    response = await manager.chat("Hello! Let's discuss quantum computing.")
-    print(response)
-
-    # Continue the conversation - all history is preserved and accessible
-    response = await manager.chat("Can you expand on quantum entanglement?")
-    print(response)
-
-asyncio.run(basic_conversation())
-```
-
-### Conversation with MCP Memory Tools
-
-```python
-import asyncio
-from hierarchical_memory_middleware.mcp_server.memory_server import MemoryMCPServer
-from hierarchical_memory_middleware.config import Config
-
-async def conversation_with_memory_tools():
-    config = Config(
-        work_model="claude-sonnet-4",
-        mcp_port=8001
-    )
-    
-    # Start MCP server for memory tools
-    memory_server = MemoryMCPServer(config)
-    mcp_server_task = asyncio.create_task(memory_server.mcp.run())
-    
-    # Create conversation manager with MCP tools
-    from hierarchical_memory_middleware.middleware.conversation_manager import HierarchicalConversationManager
-    manager = HierarchicalConversationManager(
-        config, 
-        mcp_server_url="http://127.0.0.1:8001"
-    )
-    
-    conversation_id = await manager.start_conversation()
-    
-    # The AI can now use memory tools during conversation
-    response = await manager.chat("""
-    Let's have a long discussion about machine learning. 
-    I want you to remember everything we discuss and be able 
-    to reference specific points later using your memory tools.
-    """)
-    
-    print(response)
-    
-    # Clean up
-    mcp_server_task.cancel()
-
-asyncio.run(conversation_with_memory_tools())
-```
-
-### Direct MCP Tool Usage
-
-```python
-async def explore_memory():
-    config = Config(work_model="claude-sonnet-4")
-    memory_server = MemoryMCPServer(config)
-    
-    # Set conversation context
-    await memory_server.set_conversation_id("your_conversation_id")
-    
-    # Search conversation history
-    results = await memory_server.find("machine learning", limit=5)
-    print(f"Found {results['results_count']} relevant nodes")
-    
-    # Expand a specific node for full details
-    node_details = await memory_server.expand_node(42)
-    print(f"Node content: {node_details['content']}")
-    
-    # Get conversation statistics
-    stats = await memory_server.get_conversation_stats()
+    # Get stats
+    stats = await manager.get_conversation_stats()
     print(f"Total nodes: {stats['total_nodes']}")
+
+asyncio.run(main())
 ```
 
-### Multi-Model Support
+### Streaming Responses
 
 ```python
-from hierarchical_memory_middleware.model_manager import ModelManager
+async def streaming_example():
+    manager = create_conversation_manager()
+    await manager.start_conversation()
 
-# List available models
-models = ModelManager.list_available_models()
-print("Available models:", list(models.keys()))
+    async for chunk in manager.chat_stream("Explain quantum entanglement"):
+        print(chunk, end="", flush=True)
+    print()
 
-# Validate API access
-for model_name in ["claude-sonnet-4", "gpt-4o", "gemini-2-5-flash"]:
-    has_access = ModelManager.validate_model_access(model_name)
-    print(f"{model_name}: {'✅' if has_access else '❌'}")
-
-# Use different models for different purposes
-config = Config(
-    work_model="claude-sonnet-4",      # High-quality main conversations
-)
+asyncio.run(streaming_example())
 ```
 
-## Memory Tools (MCP)
+## External MCP Servers
 
-When the MCP server is running, AI agents gain access to these memory tools:
+You can add additional MCP servers (file editing, web search, etc.) alongside the built-in memory server.
 
-### `set_conversation_id(conversation_id: str)`
-Sets the conversation context for subsequent tool calls.
+Create `~/.config/hierarchical_memory_middleware/mcp_servers.json`:
 
-### `expand_node(node_id: int)`
-Retrieves the full content of any conversation node, including:
-- Complete original content
-- All tool calls and results
-- Timestamps and metadata
-- AI component breakdowns
-
-### `find(query: str, limit: int = 10, regex: bool = False)`
-Searches conversation history with:
-- Full-text search across content and summaries
-- Regex pattern matching support
-- Relevance scoring
-- Configurable result limits
-
-### `get_conversation_stats()`
-Provides conversation overview including:
-- Total node counts by compression level
-- Compression statistics
-- Recent activity summary
-- Memory usage efficiency
-
-## Supported Models
-
-Generally can be extended to any model that supports tool calling. For more instructions and current state, have a look at `MODEL_MANAGER_README.md` and `DEFAULT_MODEL_REGISTRY` in `hierarchical_memory_middleware/models.py`. 
-
-
-## Configuration Options
-
-```python
-from hierarchical_memory_middleware.models import HierarchyThresholds
-
-# Customize compression behavior
-custom_thresholds = HierarchyThresholds(
-    summary_threshold=15,        # Keep 15 recent nodes at FULL level
-    meta_threshold=60,           # Group summaries after 60 nodes
-    archive_threshold=250,       # Archive after 250 META nodes
-    meta_group_size=25,          # Minimum nodes per META group
-    meta_group_max=45            # Maximum nodes per META group
-)
-
-config = Config(
-    work_model="claude-sonnet-4",
-    db_path="./my_conversations.db",
-    recent_node_limit=15,
-    mcp_port=8002,
-    log_tool_calls=True
-)
-```
-
-## External MCP Server Integration
-
-The middleware supports automatic management of external MCP servers through the `SimpleMCPManager` class. This allows you to run multiple MCP servers alongside the internal memory server, giving AI agents access to additional tools like file editing, web search, and GitHub integration.
-
-### Configuration
-
-Create a configuration file at `~/.config/hierarchical_memory_middleware/mcp_servers.json`:
-(the text-editor example is my personal config, the rest of the example servers are AI-generated)
 ```json
 {
-  "text-editor": {
-    "command": "/home/daniel/pp/venvs/mcp-text-editor/bin/python",
-    "args": [
-      "/home/daniel/pp/mcp-text-editor/src/text_editor/server.py",
-      "--transport", "streamable-http",
-      "--port", "8001"
-    ],
-    "env": {
-      "SKIM_MAX_LINES": "200",
-      "MAX_SELECT_LINES": "100",
-      "PYTHON_VENV": "/home/daniel/pp/venvs/llm-memory-middleware/bin/python",
-      "PYTHONPATH": "/home/daniel/pp/llm-memory-middleware"
-    },
+  "my-tools": {
+    "command": "python",
+    "args": ["-m", "my_mcp_server"],
+    "env": {"API_KEY": "..."},
     "port": 8002,
-    "tool_prefix": "text-editor",
+    "tool_prefix": "my",
     "enabled": true
-  },
-  "web-search": {
-    "command": "npx",
-    "args": ["@modelcontextprotocol/server-web-search"],
-    "env": {
-      "SEARCH_API_KEY": "your-search-api-key"
-    },
-    "port": 8003,
-    "tool_prefix": "web",
-    "enabled": false
-  },
-  "github": {
-    "command": "npx",
-    "args": ["@modelcontextprotocol/server-github"],
-    "env": {
-      "GITHUB_TOKEN": "your-github-token"
-    },
-    "port": 8004,
-    "tool_prefix": "github",
-    "enabled": false
   }
 }
 ```
 
-### Configuration Fields
-
-Each external MCP server configuration includes:
-
-- **`command`**: The command to run the MCP server (e.g., `npx`, `python`, `node`)
-- **`args`**: Array of command-line arguments
-- **`env`**: Environment variables specific to this server
-- **`port`**: Port number for the HTTP MCP server
-- **`tool_prefix`**: Prefix added to all tool names from this server
-- **`enabled`**: Whether this server should be started
-
-### Automatic Management
-
-When using the CLI interface, external MCP servers are automatically managed:
-
-1. **Startup**: Servers marked as `enabled: true` are started automatically
-2. **Integration**: Tools are made available to AI agents with the specified prefix
-3. **Cleanup**: All servers are properly terminated when the session ends
-
-### Programmatic Usage
-
-```python
-import asyncio
-from hierarchical_memory_middleware.config import Config
-from hierarchical_memory_middleware.mcp_manager import SimpleMCPManager
-from hierarchical_memory_middleware.middleware.conversation_manager import HierarchicalConversationManager
-
-async def conversation_with_external_tools():
-    config = Config(work_model="claude-sonnet-4")
-    
-    # Load external server configurations
-    external_servers = config.load_external_mcp_servers()
-    
-    # Start external MCP servers
-    mcp_manager = SimpleMCPManager()
-    external_clients = []
-    
-    for server_name, server_config in external_servers.items():
-        client = await mcp_manager.start_server(server_name, server_config)
-        if client:
-            external_clients.append(client)
-    
-    try:
-        # Create conversation manager with external tools
-        manager = HierarchicalConversationManager(
-            config,
-            mcp_server_url="http://127.0.0.1:8001",  # internal memory server
-            external_mcp_servers=external_clients      # external tools
-        )
-        
-        conversation_id = await manager.start_conversation()
-        
-        # AI now has access to memory tools + external tools
-        response = await manager.chat("""
-            Can you help me edit a file and then search for information online?
-            Use your text-editor tools to create a file and web tools to search.
-        """)
-        
-        print(response)
-        
-    finally:
-        # Clean up all external servers
-        mcp_manager.stop_all()
-
-asyncio.run(conversation_with_external_tools())
-```
+Enabled servers start automatically with the CLI and are cleaned up on exit.
 
 
 ## Development
-
-### Setup Development Environment
 
 ```bash
 # Clone and setup
@@ -806,60 +602,23 @@ uv run ruff check --fix .
 
 # Type checking
 uv run mypy .
-```
 
-### Running Examples
-
-```bash
-# Start standalone MCP server
+# Start standalone MCP server (for API-based models)
 uv run python -m hierarchical_memory_middleware.mcp_server.run_server
 
-# start CLI
+# Start CLI
 uv run python -m hierarchical_memory_middleware.cli chat
 ```
 
-## Architecture Deep Dive
+## Roadmap
 
-### Memory Compression Flow
-
-1. **New Messages**: Stored as FULL nodes with complete content
-2. **Threshold Trigger**: When FULL nodes exceed limit (default: 10)
-3. **SUMMARY Compression**: Older FULL nodes → content truncation + metadata
-4. **META Grouping**: When SUMMARY nodes exceed limit (default: 50)
-5. **ARCHIVE Compression**: When META groups exceed limit (default: 200)
-
-
-### Storage Schema
-
-The DuckDB storage uses optimized schemas for:
-- **nodes**: Core conversation data with compression metadata
-- **conversations**: High-level conversation state and statistics
-- **embeddings**: Future semantic search capabilities (optional)
-
-## Current Performance Status
-
-**Important: Performance characteristics are experimental and not systematically measured:**
-
-- **Memory Efficiency**: Unverified - varies significantly based on conversation patterns and tool usage
-- **Tool Call Limitations**: High tool call volumes (50+ per turn) can exhaust context windows
-- **Access Speed**: Basic database operations, not optimized for scale
-- **Storage**: DuckDB-based storage with compression (efficiency unverified)
-- **Scalability**: Theoretical - not tested with large conversation histories
-- **Context Management**: Currently only handles cross-turn compression, not intra-turn optimization
-
-## Research Roadmap
-
-**Active Research Areas (Core Challenges):**
-- [ ] Intra-turn context management for tool-heavy workflows
-- [ ] Dynamic context optimization during complex development sessions
-- [ ] Systematic performance measurement across different workflow types
-- [ ] Advanced tool call batching and compression strategies
-
-**Future Research Directions:**
-- [ ] Semantic search with embeddings for code understanding
-- [ ] Cross-conversation knowledge synthesis
-- [ ] Multi-conversation cross-referencing
-- [ ] Enhanced CLI interface
+- [x] Hierarchical compression (FULL → SUMMARY → META → ARCHIVE)
+- [x] Claude Agent SDK integration (subscription-based)
+- [x] MCP memory tools (search, expand, scratchpad)
+- [x] DuckDB storage with VSS
+- [x] Optional semantic search via embeddings
+- [ ] Improved intra-turn context management
+- [ ] Performance benchmarking
 - [ ] Web-based conversation browser
 
 ## Contributing
@@ -867,64 +626,14 @@ The DuckDB storage uses optimized schemas for:
 1. Fork the repository
 2. Create a feature branch
 3. Add tests for new functionality
-4. Ensure all tests pass
+4. Ensure all tests pass (`uv run pytest`)
 5. Submit a pull request
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-## Support
+## Links
 
-- **Documentation**: [GitHub Wiki](https://github.com/danielpodrazka/hierarchical-memory-middleware/wiki)
-- **Issues**: [GitHub Issues](https://github.com/danielpodrazka/hierarchical-memory-middleware/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/danielpodrazka/hierarchical-memory-middleware/discussions)
-
----
-
-
-## Project Status & Future Work
-
-Hierarchical Memory Middleware is a **proof-of-concept exploring novel approaches to AI memory management**. While it demonstrates interesting ideas around automatic compression and middleware-based memory access, significant work remains before it can be considered production-ready.
-
-**Current Status:**
-- Functional prototype demonstrating hierarchical compression concepts
-- Working MCP integration for memory access
-- Basic cross-conversation memory preservation
-- Identified limitations in tool-heavy workflows
-
-**Required Future Work:**
-- Intra-turn context management for high tool call scenarios
-- Systematic performance measurement and optimization
-- Production-ready error handling and edge case management
-- Scalability testing with real workloads
-- Better documentation and examples
-
-**Interested in Contributing?**
-
-This project represents early-stage research into automatic AI memory systems. If you're interested in exploring these concepts or contributing to development, check out the [installation](#installation) instructions to try the current prototype.
-
-## Citation
-
-If you use this work in your research, please cite it as:
-
-```bibtex
-@software{podrazka2025hierarchical,
-  author = {Podr\k{a}\k{z}ka, Daniel},
-  title = {Hierarchical Memory Middleware: Exploring Automatic Compression for AI Conversations},
-  year = {2025},
-  url = {https://github.com/danielpodrazka/hierarchical-memory-middleware},
-  note = {Research prototype for investigating memory management in AI systems}
-}
-```
-
-**Plain text citation:**
-Podrażka, D. (2025). Hierarchical Memory Middleware: Exploring Automatic Compression for AI Conversations. Retrieved from https://github.com/danielpodrazka/hierarchical-memory-middleware
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-*This experimental middleware explores automatic memory compression for AI conversations. While promising in concept, it requires substantial development work to handle all real-world use cases reliably.*
+- [GitHub Issues](https://github.com/danielpodrazka/hierarchical-memory-middleware/issues)
+- [GitHub Discussions](https://github.com/danielpodrazka/hierarchical-memory-middleware/discussions)

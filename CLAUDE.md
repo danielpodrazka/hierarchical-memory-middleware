@@ -4,34 +4,22 @@ This file provides context for AI assistants (like Claude Code) working on the H
 
 ## Project Overview
 
-**Hierarchical Memory Middleware** is a Python library that provides hierarchical compression for AI conversations, enabling effectively unlimited conversation length by intelligently compressing older messages while maintaining access to full details via MCP tools.
+**Hierarchical Memory Middleware** is a Python library that enables infinite AI conversations through intelligent hierarchical compression. It preserves access to full conversation details via MCP tools while automatically compressing older messages.
 
 ### Key Value Proposition
 
-- **For Claude Max/Pro subscribers**: Use your subscription instead of API credits
-- **Infinite conversations**: Automatic compression of older messages
-- **Memory tools**: AI can search and expand compressed content
+- **Claude Pro/Max subscribers**: Use your subscription instead of API credits via Claude Agent SDK
+- **Infinite conversations**: Automatic FULL → SUMMARY → META → ARCHIVE compression
+- **Memory tools**: AI can search, expand compressed content, and maintain a scratchpad
 
 ## Architecture
 
 ### Two Conversation Managers
 
-1. **ClaudeAgentSDKConversationManager** (Default, Recommended)
-   - Uses Claude Agent SDK (spawns Claude CLI subprocess)
-   - Works with Claude Pro/Max subscription (no API credits needed)
-   - Memory tools provided via stdio MCP subprocess
-   - Location: `hierarchical_memory_middleware/middleware/claude_agent_sdk_manager.py`
-
-2. **HierarchicalConversationManager** (API-based)
-   - Uses PydanticAI for LLM orchestration
-   - Requires API keys and credits
-   - Memory tools via HTTP MCP server
-   - Location: `hierarchical_memory_middleware/middleware/conversation_manager.py`
-
-### Factory Function
+The system uses a factory pattern to select the appropriate manager:
 
 ```python
-from hierarchical_memory_middleware.middleware import create_conversation_manager
+from hierarchical_memory_middleware import create_conversation_manager
 
 # Auto-selects based on model name:
 # - "claude-agent-*" -> ClaudeAgentSDKConversationManager
@@ -39,48 +27,114 @@ from hierarchical_memory_middleware.middleware import create_conversation_manage
 manager = create_conversation_manager()
 ```
 
-### Key Directories
+1. **ClaudeAgentSDKConversationManager** (Default)
+   - Uses Claude CLI subprocess with OAuth authentication
+   - Works with Claude Pro/Max subscription (no API credits)
+   - Memory tools via stdio MCP subprocess
+   - Location: `middleware/claude_agent_sdk_manager.py`
+
+2. **HierarchicalConversationManager** (API-based)
+   - Uses PydanticAI for LLM orchestration
+   - Requires API keys and credits
+   - Memory tools via HTTP MCP server
+   - Location: `middleware/conversation_manager.py`
+
+### Directory Structure
 
 ```
 hierarchical_memory_middleware/
 ├── middleware/                    # Conversation managers
-│   ├── __init__.py               # Factory function
-│   ├── claude_agent_sdk_manager.py  # Claude Agent SDK manager
-│   └── conversation_manager.py    # PydanticAI-based manager
+│   ├── __init__.py               # Factory: create_conversation_manager()
+│   ├── claude_agent_sdk_manager.py  # Claude CLI (Pro/Max subscription)
+│   └── conversation_manager.py    # PydanticAI (API keys)
 ├── mcp_server/                   # MCP server implementations
-│   ├── stdio_memory_server.py    # Stdio server for Agent SDK
-│   ├── memory_server.py          # HTTP server for API models
+│   ├── stdio_memory_server.py    # stdio transport for Agent SDK
+│   ├── memory_server.py          # HTTP transport for API models
 │   └── run_server.py             # Standalone server runner
-├── storage/                      # DuckDB storage layer
-├── compression/                  # Compression algorithms
-├── config.py                     # Configuration management
-├── models.py                     # Model definitions and registry
-├── model_manager.py              # Model validation and access
-└── cli.py                        # Command-line interface
+├── storage.py                    # DuckDB storage with VSS extension
+├── compression.py                # TfidfCompressor, CompressionManager
+├── advanced_hierarchy.py         # AdvancedCompressionManager
+├── embeddings.py                 # Optional semantic search
+├── models.py                     # Data models & DEFAULT_MODEL_REGISTRY
+├── model_manager.py              # Model validation & access
+├── config.py                     # Config class with from_env()
+├── db_utils.py                   # Database connection utilities
+├── mcp_manager.py                # External MCP server management
+└── cli.py                        # Typer CLI with Rich formatting
 ```
 
 ### Compression Levels
 
 ```
-FULL → SUMMARY → META → ARCHIVE
+FULL (recent 10) → SUMMARY (50) → META (200) → ARCHIVE
 ```
 
-- **FULL**: Recent messages, complete content
-- **SUMMARY**: Older messages, truncated with TF-IDF topics
-- **META**: Groups of summaries
+- **FULL**: Complete content, all tool calls preserved
+- **SUMMARY**: First N words + TF-IDF extracted topics
+- **META**: Groups of 20-40 summaries with theme extraction
 - **ARCHIVE**: Highly compressed historical context
+
+### Memory Tools (MCP)
+
+Available to AI during conversations:
+
+| Tool | Description |
+|------|-------------|
+| `expand_node(node_id)` | Get full content of compressed node |
+| `search_memory(query, limit, mode)` | Search history (keyword/semantic/hybrid) |
+| `get_memory_stats()` | Compression statistics |
+| `get_recent_nodes(count)` | Recent messages in full |
+| `get_system_prompt()` | Read scratchpad |
+| `set_system_prompt(content)` | Replace scratchpad |
+| `append_to_system_prompt(content)` | Add to scratchpad |
+| `yield_to_human(reason)` | Signal need for human input (agentic mode) |
+| `backfill_embeddings()` | Generate embeddings for semantic search |
+
+### Agentic Mode
+
+Agentic mode enables autonomous AI operation with explicit handoff control. The AI works continuously until it calls `yield_to_human()` or the user interrupts.
+
+**CLI Flag:**
+```bash
+uv run python -m hierarchical_memory_middleware.cli chat --agentic
+```
+
+**How it works:**
+
+1. User sends initial request
+2. System sends "continue" message automatically after each AI response
+3. AI keeps working until it calls `yield_to_human(reason)`
+4. System pauses for human input
+5. User responds, cycle repeats
+
+**Key Implementation Details:**
+
+- System prompt injection (`claude_agent_sdk_manager.py:589-606`) instructs AI about agentic mode
+- CLI chat loop (`cli.py:764-977`) handles auto-continue vs yield detection
+- `yield_to_human` tool (`stdio_memory_server.py:322-347`) is a signal, not a control flow tool
+
+**Interrupt Handling:**
+- Single `Ctrl+C`: Sets `interrupted=True`, `yielded_to_human=True`, pauses for input
+- Double `Ctrl+C`: Exits session
+
+**When AI should call `yield_to_human()`:**
+- Task is complete
+- Needs clarification or decision
+- Blocked on missing information
+- Reached a natural checkpoint
 
 ## Development Commands
 
 ```bash
 # Install dependencies
 uv sync
+uv sync --dev          # Include dev dependencies
+uv sync --extra embeddings  # Include semantic search
 
 # Run tests
 uv run pytest
-
-# Run specific test file
-uv run pytest tests/test_specific.py -v
+uv run pytest tests/test_storage.py -v  # Specific test
+uv run pytest --cov=hierarchical_memory_middleware  # With coverage
 
 # Format code
 uv run black .
@@ -89,16 +143,17 @@ uv run ruff check --fix .
 # Type checking
 uv run mypy .
 
-# Run CLI chat
+# Run CLI
 uv run python -m hierarchical_memory_middleware.cli chat
+uv run python -m hierarchical_memory_middleware.cli chat --model gpt-4o
 
-# Run CLI with specific model
-uv run python -m hierarchical_memory_middleware.cli chat --model claude-agent-sonnet
+# Run standalone MCP server (for API models)
+uv run python -m hierarchical_memory_middleware.mcp_server.run_server
 ```
 
 ## Configuration
 
-### Environment Variables
+### Environment Variables (.env)
 
 ```bash
 # Model selection (default: claude-agent-sonnet)
@@ -107,50 +162,83 @@ WORK_MODEL=claude-agent-sonnet
 # Claude Agent SDK settings
 AGENT_PERMISSION_MODE=default      # default, acceptEdits, bypassPermissions
 AGENT_USE_SUBSCRIPTION=true        # Use subscription instead of API credits
+AGENT_ALLOWED_TOOLS=               # Comma-separated allowed tools
+
+# API keys (for API-based models)
+ANTHROPIC_API_KEY=your_key
+OPENAI_API_KEY=your_key
+GEMINI_API_KEY=your_key
+MOONSHOT_API_KEY=your_key
+DEEPSEEK_API_KEY=your_key
+TOGETHER_API_KEY=your_key
 
 # Compression thresholds
-RECENT_NODE_LIMIT=10               # Nodes kept at FULL level
-SUMMARY_THRESHOLD=20               # When to compress to SUMMARY
-META_SUMMARY_THRESHOLD=50          # When to create META groups
-ARCHIVE_THRESHOLD=200              # When to archive
+RECENT_NODE_LIMIT=10
+SUMMARY_THRESHOLD=20
+META_SUMMARY_THRESHOLD=50
+ARCHIVE_THRESHOLD=200
 
 # Storage
 DB_PATH=./conversations.db
+MCP_PORT=8000
 
 # Logging
 LOG_LEVEL=INFO
 DEBUG_MODE=false
+LOG_FILE=hierarchical_memory.log
 ```
 
 ### Model Names
 
-- **Claude Agent SDK**: `claude-agent-opus`, `claude-agent-sonnet`, `claude-agent-haiku`
-- **Anthropic API**: `claude-sonnet-4`, `claude-opus-4`, `claude-haiku-35`
-- **OpenAI**: `gpt-4o`, `gpt-4o-mini`, `o1`, `o1-mini`
-- **Others**: See `models.py` for full list
+**Claude Agent SDK** (subscription):
+- `claude-agent-opus`, `claude-agent-sonnet`, `claude-agent-haiku`
 
-## Memory Tools (MCP)
+**Anthropic API**: `claude-sonnet-4`, `claude-3-5-haiku`
 
-### For Claude Agent SDK (stdio subprocess)
+**OpenAI**: `gpt-4o`, `gpt-4o-mini`
 
-Tools automatically available to the AI:
-- `mcp__memory__expand_node(node_id)` - Get full content of a node
-- `mcp__memory__search_memory(query, limit)` - Search conversation history
-- `mcp__memory__get_memory_stats()` - Get conversation statistics
-- `mcp__memory__get_recent_nodes(count)` - Get recent messages
+**Google**: `gemini-2-5-pro`, `gemini-2-5-flash`, `gemini-2-0-flash`, `gemini-1-5-pro`, `gemini-1-5-flash`
 
-### For API Models (HTTP server)
+**Moonshot**: `kimi-k2-0711-preview`, `moonshot-v1-128k`
 
-Requires running MCP server:
-```bash
-python -m hierarchical_memory_middleware.mcp_server.run_server
-```
+**DeepSeek**: `deepseek-chat`, `deepseek-coder`
+
+**Together**: `llama-3-8b-instruct`, `llama-3-70b-instruct`
+
+## Common Tasks
+
+### Adding a New Model
+
+1. Add to `DEFAULT_MODEL_REGISTRY` in `models.py`:
+   ```python
+   "new-model": ModelConfig(
+       provider=ModelProvider.PROVIDER_NAME,
+       model_name="actual-api-model-name",
+       api_key_env="PROVIDER_API_KEY",
+       context_window=128000,
+       supports_functions=True,
+   ),
+   ```
+2. Add API key env var to `Config.from_env()` if needed
+3. Update `model_manager.py` validation if needed
+
+### Adding a New Memory Tool
+
+1. **For Claude Agent SDK**: Add to `mcp_server/stdio_memory_server.py`
+2. **For API models**: Add to `mcp_server/memory_server.py`
+3. Update allowed tools list in `claude_agent_sdk_manager.py` if needed
+
+### Modifying Compression Logic
+
+- **TF-IDF compression**: `compression.py` - `TfidfCompressor` class
+- **Compression triggers**: `advanced_hierarchy.py` - `AdvancedCompressionManager`
+- **Thresholds**: `config.py` (Config dataclass) and `models.py` (HierarchyThresholds)
 
 ## Key Implementation Details
 
-### Subscription Mode Workaround
+### Subscription Mode (Claude Agent SDK)
 
-The Claude Agent SDK doesn't officially support using subscriptions instead of API credits, but clearing the `ANTHROPIC_API_KEY` environment variable forces the CLI to use OAuth credentials from `~/.claude/.credentials.json`:
+The Claude Agent SDK doesn't officially expose subscription mode, but clearing `ANTHROPIC_API_KEY` forces CLI to use OAuth from `~/.claude/.credentials.json`:
 
 ```python
 # In claude_agent_sdk_manager.py
@@ -160,80 +248,81 @@ if self.use_subscription:
 
 ### Stdio Memory Server
 
-For Claude Agent SDK, memory tools are provided via a stdio subprocess:
+For Claude Agent SDK, memory tools run as a subprocess:
 
 ```python
 mcp_servers["memory"] = {
     "command": sys.executable,
-    "args": [
-        "-m", "hierarchical_memory_middleware.mcp_server.stdio_memory_server",
-        "--conversation-id", self.conversation_id,
-        "--db-path", self.config.db_path,
-    ],
+    "args": ["-m", "hierarchical_memory_middleware.mcp_server.stdio_memory_server",
+             "--conversation-id", self.conversation_id,
+             "--db-path", self.config.db_path],
     "env": env,
 }
 ```
 
-## Common Tasks
+### DuckDB with VSS
 
-### Adding a New Model
-
-1. Add to `DEFAULT_MODEL_REGISTRY` in `models.py`
-2. Add API key env var to `Config.from_env()` if needed
-3. Update `model_manager.py` validation if needed
-
-### Adding a New Memory Tool
-
-1. For Agent SDK: Add to `stdio_memory_server.py`
-2. For API models: Add to `memory_server.py`
-3. Update allowed tools list in respective manager
-
-### Modifying Compression Logic
-
-- TF-IDF compression: `compression/tfidf_compressor.py`
-- Compression triggers: `advanced_hierarchy.py`
-- Thresholds: `config.py` and `models.py`
+Storage uses DuckDB's VSS extension for vector similarity search:
+- Installed/loaded automatically if semantic search is enabled
+- Falls back to brute-force if VSS fails to load
+- Embeddings generated via sentence-transformers (default: all-MiniLM-L6-v2)
 
 ## Testing
 
 ```bash
-# Run all tests
+# All tests
 uv run pytest
 
-# Run with coverage
-uv run pytest --cov=hierarchical_memory_middleware
+# With verbose output
+uv run pytest -v
 
-# Run specific test
-uv run pytest tests/test_claude_agent_sdk.py -v
+# Specific test file
+uv run pytest tests/test_storage.py
+
+# With coverage report
+uv run pytest --cov=hierarchical_memory_middleware --cov-report=html
+
+# Skip slow tests
+uv run pytest -m "not slow"
 ```
+
+### Test Files
+
+- `test_storage.py` - DuckDB storage operations
+- `test_compression.py` - TF-IDF compression
+- `test_advanced_hierarchy.py` - Multi-level compression
+- `test_conversation_manager.py` - PydanticAI manager
+- `test_claude_agent_sdk.py` - Claude Agent SDK manager
+- `test_mcp_server.py` - MCP server tools
+- `test_config.py` - Configuration loading
 
 ## Debugging
 
 ### Enable Debug Logging
 
 ```bash
-DEBUG_MODE=true python -m hierarchical_memory_middleware.cli chat
+DEBUG_MODE=true uv run python -m hierarchical_memory_middleware.cli chat
 ```
 
-### Check Memory State
+### Check Stdio Server Logs
+
+```bash
+tail -f /tmp/hmm_stdio_server.log
+```
+
+### Inspect Database
 
 ```python
-# In a conversation
-manager = create_conversation_manager()
-await manager.start_conversation()
-
-# Get stats
-stats = await manager.get_conversation_stats()
-print(stats)
-
-# Search memory
-results = await manager.search_memory("topic")
-print(results)
+import duckdb
+conn = duckdb.connect("conversations.db")
+conn.execute("SELECT * FROM nodes LIMIT 10").fetchall()
+conn.execute("SELECT * FROM conversations").fetchall()
 ```
 
 ## Important Notes
 
-- Claude Agent SDK requires Claude CLI to be installed and authenticated (`claude login`)
-- The stdio memory server logs to `/tmp/hmm_stdio_server.log`
-- DuckDB database is created automatically at the configured `db_path`
-- Compression happens automatically when thresholds are exceeded
+- Claude Agent SDK requires Claude CLI installed and authenticated (`claude login`)
+- DuckDB database created automatically at configured `db_path`
+- Compression happens automatically when thresholds exceeded
+- System prompt/scratchpad persists per conversation in database
+- Embeddings are optional - install with `uv sync --extra embeddings`
