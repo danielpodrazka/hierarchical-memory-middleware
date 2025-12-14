@@ -248,11 +248,17 @@ def chat(
         "--stream/--no-stream",
         help="Enable streaming responses (default: True)",
     ),
+    dangerously_skip_permissions: bool = typer.Option(
+        False,
+        "--dangerously-skip-permissions",
+        help="Skip all permission prompts (use with caution)",
+    ),
 ):
     """Start an interactive chat session with MCP memory tools."""
     asyncio.run(
         _chat_session(
-            conversation_id, name, model, db_path, recent_limit, mcp_port, export_dir, stream
+            conversation_id, name, model, db_path, recent_limit, mcp_port, export_dir, stream,
+            dangerously_skip_permissions
         )
     )
 
@@ -266,6 +272,7 @@ async def _chat_session(
     mcp_port: Optional[int],
     export_dir: str,
     stream: bool,
+    dangerously_skip_permissions: bool = False,
 ):
     """Run the interactive chat session with MCP integration."""
     # Load configuration
@@ -280,6 +287,8 @@ async def _chat_session(
         config.recent_node_limit = recent_limit
     if mcp_port:
         config.mcp_port = mcp_port
+    if dangerously_skip_permissions:
+        config.agent_permission_mode = "bypassPermissions"
 
     # Configure test-specific settings
     config.recent_node_limit = config.recent_node_limit or 5
@@ -294,6 +303,8 @@ async def _chat_session(
     if is_agent_sdk:
         console.print("[cyan]🔌 Provider: Claude Agent SDK (CLI auth)[/cyan]")
         console.print("[cyan]🧠 Memory tools: Built-in (via stdio subprocess)[/cyan]")
+    if dangerously_skip_permissions:
+        console.print("[bold red]⚠️  DANGER: All permissions bypassed![/bold red]")
     console.print(f"🔗 Recent nodes limit: {config.recent_node_limit}")
     console.print(f"📈 Summary threshold: {config.summary_threshold}")
     console.print(f"⚡ Streaming: {'Enabled' if stream else 'Disabled'}")
