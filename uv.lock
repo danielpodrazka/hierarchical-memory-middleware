@@ -306,6 +306,22 @@ wheels = [
 ]
 
 [[package]]
+name = "claude-agent-sdk"
+version = "0.1.16"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "mcp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/58/44/cb098af3ec7045f3879c9dd22264f1e42ebe15047d6221320b5a61507def/claude_agent_sdk-0.1.16.tar.gz", hash = "sha256:d38d361eaafb2599ab6ba1472ac797f0420a2481f2893ab0b102e64b1cadf78a", size = 55985, upload-time = "2025-12-13T00:24:24.533Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/d5/09f8d74a36d26613d0bf0317b2ef2aa128df732a75d61b6da29dd325a97f/claude_agent_sdk-0.1.16-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1061ec27599876ff4138d798147f2776c609328632a939e17103fa45a13d086e", size = 49599124, upload-time = "2025-12-13T00:24:11.613Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/0c/5fcdc08e1bd3b3878ec6c7ee4aba5dead9dd1a69cf0ca45f9b284e9e9831/claude_agent_sdk-0.1.16-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:f287d7d003089cbe4da8f122ab7afd402d93c79bebbffa560f462dbbc4a78563", size = 63891863, upload-time = "2025-12-13T00:24:15.031Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/7d/84b3edbbe448a835a9b8a4bd8be6992e2535e20c1e7bc7992d58b73f9dea/claude_agent_sdk-0.1.16-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:562a16bcf6f2d67eeb62c31f2500f0d3fd3e6349983c85537e83343bbdddaef7", size = 65488353, upload-time = "2025-12-13T00:24:18.541Z" },
+    { url = "https://files.pythonhosted.org/packages/67/30/3de1196f5ffa099c9b1878fb4c2ec128961ec6973ca3e6be9b2c5a497769/claude_agent_sdk-0.1.16-py3-none-win_amd64.whl", hash = "sha256:48edca31d488a911248da0ba3c1bd1f4440ced2ab84e877040e4d8c31641c0eb", size = 67766031, upload-time = "2025-12-13T00:24:21.976Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -762,6 +778,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "asyncio-mqtt" },
+    { name = "claude-agent-sdk" },
     { name = "duckdb" },
     { name = "fastmcp" },
     { name = "httpx" },
@@ -816,6 +833,7 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "asyncio-mqtt", specifier = ">=0.16.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "claude-agent-sdk", specifier = ">=0.1.0" },
     { name = "duckdb", specifier = ">=1.1.0" },
     { name = "fastmcp", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },

@@ -1,13 +1,15 @@
 """MCP server for hierarchical memory browsing tools."""
 
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
 from fastmcp import FastMCP
 
 from ..config import Config
 from ..storage import DuckDBStorage
 from ..middleware.conversation_manager import HierarchicalConversationManager
+from ..middleware.claude_agent_sdk_manager import ClaudeAgentSDKConversationManager
+from ..model_manager import ModelManager
 
 
 logger = logging.getLogger(__name__)
@@ -34,10 +36,23 @@ class MemoryMCPServer:
         self.server_url = f"http://127.0.0.1:{config.mcp_port}"
 
         # Initialize conversation manager WITHOUT MCP tools (tools are provided by this server)
-        self.conversation_manager = HierarchicalConversationManager(
-            config,
-            self.storage,  # No MCP server URL - avoid circular dependency
-        )
+        # Check if using Claude Agent SDK model
+        if ModelManager.is_claude_agent_sdk_model(config.work_model):
+            # Use ClaudeAgentSDKConversationManager for Agent SDK models
+            model_config = ModelManager.get_model_config(config.work_model)
+            self.conversation_manager: Union[
+                HierarchicalConversationManager, ClaudeAgentSDKConversationManager
+            ] = ClaudeAgentSDKConversationManager(
+                config=config,
+                model_config=model_config,
+                storage=self.storage,
+            )
+        else:
+            # Use standard HierarchicalConversationManager for API-based models
+            self.conversation_manager = HierarchicalConversationManager(
+                config,
+                self.storage,  # No MCP server URL - avoid circular dependency
+            )
 
         logger.info(f"MemoryMCPServer initialized on {self.server_url}")
 

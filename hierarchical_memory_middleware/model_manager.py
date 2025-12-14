@@ -13,12 +13,28 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 # Import Pydantic models from models.py
 from .models import (
     ModelProvider,
-    ModelConfig, 
+    ModelConfig,
     ModelInstance,
     ModelValidationResult,
     ModelRegistry,
     DEFAULT_MODEL_REGISTRY
 )
+
+
+class ClaudeAgentSDKMarker:
+    """Marker class indicating that Claude Agent SDK should be used.
+
+    This is returned by ModelManager.create_model() for CLAUDE_AGENT_SDK provider models.
+    The conversation manager should check for this type and use the appropriate
+    Claude Agent SDK integration.
+    """
+
+    def __init__(self, model_name: str, config: ModelConfig):
+        self.model_name = model_name
+        self.config = config
+
+    def __repr__(self) -> str:
+        return f"ClaudeAgentSDKMarker(model={self.model_name})"
 
 
 class ModelManager:
@@ -66,16 +82,19 @@ class ModelManager:
         cls._registry.register_model(model_name, config)
 
     @classmethod
-    def create_model(cls, model_name: str, **kwargs) -> Union[Model, str]:
-        """Create a PydanticAI compatible model instance.
-        
+    def create_model(
+        cls, model_name: str, **kwargs
+    ) -> Union[Model, str, "ClaudeAgentSDKMarker"]:
+        """Create a PydanticAI compatible model instance or Claude Agent SDK marker.
+
         Args:
             model_name: Name of the model to create
             **kwargs: Additional parameters to override defaults
-            
+
         Returns:
-            Model instance compatible with PydanticAI
-            
+            - Model instance compatible with PydanticAI
+            - ClaudeAgentSDKMarker for Claude Agent SDK models (requires different handling)
+
         Raises:
             ValueError: If model is not supported or API key is missing
         """
@@ -87,7 +106,13 @@ class ModelManager:
                 f"Available models: {available_models}"
             )
 
-        # Get API key from environment
+        # Handle Claude Agent SDK models - these use CLI auth, not API key
+        if config.provider == ModelProvider.CLAUDE_AGENT_SDK:
+            # Claude Agent SDK uses CLI authentication (Claude Pro/Max subscription)
+            # No API key required if Claude CLI is authenticated
+            return ClaudeAgentSDKMarker(model_name=model_name, config=config)
+
+        # Get API key from environment (required for non-Agent SDK providers)
         api_key = os.getenv(config.api_key_env)
         if not api_key:
             raise ValueError(
@@ -169,11 +194,41 @@ class ModelManager:
 
     @classmethod
     def validate_model_access(cls, model_name: str) -> bool:
-        """Validate that a model can be accessed (API key exists)."""
+        """Validate that a model can be accessed (API key exists or CLI auth)."""
         config = cls.get_model_config(model_name)
         if not config:
             return False
+        # Claude Agent SDK uses CLI auth, not API key
+        if config.provider == ModelProvider.CLAUDE_AGENT_SDK:
+            return cls._check_claude_cli_available()
         return bool(os.getenv(config.api_key_env))
+
+    @classmethod
+    def _check_claude_cli_available(cls) -> bool:
+        """Check if Claude CLI is available and authenticated."""
+        import shutil
+        import subprocess
+
+        # Check if claude CLI exists
+        if not shutil.which("claude"):
+            return False
+        # Try to run a simple command to verify it's working
+        try:
+            result = subprocess.run(
+                ["claude", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
+
+    @classmethod
+    def is_claude_agent_sdk_model(cls, model_name: str) -> bool:
+        """Check if a model uses Claude Agent SDK."""
+        config = cls.get_model_config(model_name)
+        return config is not None and config.provider == ModelProvider.CLAUDE_AGENT_SDK
 
     @classmethod
     def get_missing_api_keys(cls) -> Dict[str, str]:

@@ -18,9 +18,12 @@ from rich.markdown import Markdown
 from rich.status import Status
 
 from .config import Config
+from .middleware import create_conversation_manager
 from .middleware.conversation_manager import HierarchicalConversationManager
+from .middleware.claude_agent_sdk_manager import ClaudeAgentSDKConversationManager
 from .models import CompressionLevel, NodeType
 from .mcp_manager import SimpleMCPManager
+from .model_manager import ModelManager
 
 # Logging will be configured by the CLI callback (setup_cli_logging)
 logger = logging.getLogger(__name__)
@@ -282,48 +285,57 @@ async def _chat_session(
     config.recent_node_limit = config.recent_node_limit or 5
     config.summary_threshold = config.summary_threshold or 20
 
+    # Check if using Claude Agent SDK
+    is_agent_sdk = ModelManager.is_claude_agent_sdk_model(config.work_model)
+
     console.print("[bold green]🚀 Hierarchical Memory Middleware[/bold green]")
     console.print(f"📄 Database: {config.db_path}")
     console.print(f"🤖 Model: {config.work_model}")
+    if is_agent_sdk:
+        console.print("[cyan]🔌 Provider: Claude Agent SDK (CLI auth)[/cyan]")
+        console.print("[cyan]🧠 Memory tools: Built-in (via stdio subprocess)[/cyan]")
     console.print(f"🔗 Recent nodes limit: {config.recent_node_limit}")
     console.print(f"📈 Summary threshold: {config.summary_threshold}")
     console.print(f"⚡ Streaming: {'Enabled' if stream else 'Disabled'}")
 
-    # Setup MCP server (required)
-    mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
-    console.print(f"📡 MCP server: {mcp_server_url}")
+    # Setup MCP server (only needed for non-Agent SDK models)
+    mcp_server_url = None
+    external_clients = []
+    mcp_manager = SimpleMCPManager()
 
-    # Check if MCP server is running
-    if not check_mcp_server_running(mcp_server_url):
-        console.print("[red]❌ MCP server is not running![/red]")
-        console.print("[yellow]Please start the MCP server first:[/yellow]")
-        console.print(
-            f"[yellow]   python -m hierarchical_memory_middleware.mcp_server.run_server[/yellow]"
-        )
-        sys.exit(1)
+    if not is_agent_sdk:
+        # For PydanticAI models, check if MCP server is running
+        mcp_server_url = f"http://127.0.0.1:{config.mcp_port}/mcp"
+        console.print(f"📡 MCP server: {mcp_server_url}")
 
-    console.print("[green]✅ MCP server is running[/green]")
+        mcp_running = check_mcp_server_running(mcp_server_url)
+        if mcp_running:
+            console.print("[green]✅ MCP server is running[/green]")
+            # Load and start external MCP servers
+            external_servers = config.load_external_mcp_servers()
+            for server_name, server_config in external_servers.items():
+                client = await mcp_manager.start_server(server_name, server_config)
+                if client:
+                    external_clients.append(client)
+        else:
+            console.print("[red]❌ MCP server is not running![/red]")
+            console.print("[yellow]Please start the MCP server first:[/yellow]")
+            console.print(
+                f"[yellow]   python -m hierarchical_memory_middleware.mcp_server.run_server[/yellow]"
+            )
+            sys.exit(1)
+
     console.print()
 
     # Setup conversation export directory
     os.makedirs(export_dir, exist_ok=True)
 
-    # Load and start external MCP servers
-    external_servers = config.load_external_mcp_servers()
-    mcp_manager = SimpleMCPManager()
-    external_clients = []
-
-    for server_name, server_config in external_servers.items():
-        client = await mcp_manager.start_server(server_name, server_config)
-        if client:
-            external_clients.append(client)
-
     try:
-        # Initialize conversation manager with all servers
-        manager = HierarchicalConversationManager(
-            config,
-            mcp_server_url=mcp_server_url,  # memory server
-            external_mcp_servers=external_clients  # external servers
+        # Initialize conversation manager (factory auto-selects based on model)
+        manager = create_conversation_manager(
+            config=config,
+            mcp_server_url=mcp_server_url,
+            external_mcp_servers=external_clients if external_clients else None,
         )
 
         # Resolve conversation identifier

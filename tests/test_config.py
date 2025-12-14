@@ -9,7 +9,8 @@ def test_config_defaults():
     """Test that Config has expected default values."""
     config = Config()
 
-    assert config.work_model == "claude-sonnet-4"
+    # Default model is now Claude Agent SDK (uses CLI auth, Pro/Max subscription)
+    assert config.work_model == "claude-agent-sonnet"
     assert config.embedding_model == "text-embedding-3-small"
     assert config.db_path == "./conversations.db"
     assert config.recent_node_limit == 10
@@ -19,6 +20,9 @@ def test_config_defaults():
     assert config.backup_interval_minutes == 5
     assert config.mcp_port == 8000
     assert config.enable_mcp_tools is True
+    # Claude Agent SDK specific defaults
+    assert config.agent_permission_mode == "default"
+    assert config.agent_allowed_tools == ""
 
 
 def test_config_customization():
@@ -61,8 +65,8 @@ def test_from_env_or_default_no_env_file():
     """Test from_env_or_default returns defaults when no .env file exists."""
     config = Config.from_env_or_default(env_file="nonexistent.env")
 
-    # Should have default values
-    assert config.work_model == "claude-sonnet-4"
+    # Should have default values (claude-agent-sonnet is new default)
+    assert config.work_model == "claude-agent-sonnet"
     assert config.db_path == "./conversations.db"
 
 

@@ -51,7 +51,7 @@ async def main() -> None:
     )
     parser.add_argument(
         "--work-model",
-        default="claude-sonnet-4",
+        default="claude-agent-opus",
         help="Model to use for work tasks (default: claude-sonnet-4)",
     )
     parser.add_argument("--conversation-id", help="Resume a specific conversation ID")

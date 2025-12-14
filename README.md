@@ -342,7 +342,29 @@ pip install -e .
 
 ## Quick Start
 
-After installation, you can start using the hierarchical memory middleware immediately:
+After installation, you can start using the hierarchical memory middleware immediately.
+
+### Option 1: Claude Agent SDK (Recommended - Uses Your Claude Subscription)
+
+The easiest way to get started is with Claude Agent SDK, which uses your Claude Pro/Max subscription instead of API credits:
+
+```bash
+# Ensure Claude CLI is installed and authenticated
+claude --version
+
+# Start an interactive chat session (no external server needed!)
+python -m hierarchical_memory_middleware.cli chat
+```
+
+That's it! Memory tools are built-in via stdio subprocess - no separate MCP server required.
+
+**Requirements:**
+- Claude CLI installed and authenticated (`claude login`)
+- Claude Pro or Max subscription
+
+### Option 2: Standard Mode (Uses API Credits)
+
+For other LLM providers or API-based usage:
 
 1. **Start the MCP server** (required for memory operations):
 
@@ -354,15 +376,15 @@ python hierarchical_memory_middleware/mcp_server/run_server.py
 2. **Start an interactive chat session**:
 
 ```bash
-# Start an interactive chat session
-python -m hierarchical_memory_middleware.cli chat
+# Start with a specific model
+python -m hierarchical_memory_middleware.cli chat --model claude-sonnet-4
 ```
 
 This will:
 - Start a conversation with intelligent memory compression
 - Automatically create a conversation database
 - Provide MCP tools for memory browsing
-- Use your configured model (default: claude-sonnet-4)
+- Use your configured model
 
 ### Your First Conversation
 
@@ -417,9 +439,72 @@ config = Config(
 )
 ```
 
+### Claude Agent SDK Configuration (Recommended)
+
+The Claude Agent SDK is the recommended approach as it uses your Claude Pro/Max subscription:
+
+```python
+from hierarchical_memory_middleware.config import Config
+
+config = Config(
+    work_model="claude-agent-sonnet",       # Use Claude Agent SDK
+    db_path="./conversations.db",
+    recent_node_limit=10,
+    # Claude Agent SDK specific settings
+    agent_permission_mode="default",        # "default", "acceptEdits", or "bypassPermissions"
+    agent_use_subscription=True,            # Use subscription (not API credits)
+)
+```
+
+**Available Claude Agent SDK models:**
+- `claude-agent-opus` - Most capable, best for complex tasks
+- `claude-agent-sonnet` - Balanced performance (default)
+- `claude-agent-haiku` - Fastest, best for simple tasks
+
+**Environment variables for Claude Agent SDK:**
+```bash
+# In .env file
+WORK_MODEL=claude-agent-sonnet
+AGENT_PERMISSION_MODE=default
+AGENT_USE_SUBSCRIPTION=true
+```
+
 ## Usage
 
-### Basic Conversation
+### Using Claude Agent SDK (Recommended)
+
+The simplest way to use the middleware with your Claude subscription:
+
+```python
+import asyncio
+from hierarchical_memory_middleware.middleware import create_conversation_manager
+from hierarchical_memory_middleware.config import Config
+
+async def claude_agent_conversation():
+    # Create config with Claude Agent SDK model
+    config = Config(work_model="claude-agent-sonnet")
+
+    # Factory function auto-selects the right manager
+    manager = create_conversation_manager(config=config)
+
+    # Start a new conversation
+    conversation_id = await manager.start_conversation()
+
+    # Chat - memory tools are automatically available
+    response = await manager.chat("Hello! Let's discuss quantum computing.")
+    print(response)
+
+    # The AI can use built-in memory tools:
+    # - search_memory(query) - Search conversation history
+    # - expand_node(id) - Get full content of a node
+    # - get_memory_stats() - Get memory statistics
+    response = await manager.chat("What did we discuss earlier?")
+    print(response)
+
+asyncio.run(claude_agent_conversation())
+```
+
+### Basic Conversation (API-based models)
 
 ```python
 import asyncio
@@ -429,14 +514,14 @@ from hierarchical_memory_middleware.middleware.conversation_manager import Hiera
 async def basic_conversation():
     config = Config(work_model="claude-sonnet-4")
     manager = HierarchicalConversationManager(config)
-    
+
     # Start a new conversation
     conversation_id = await manager.start_conversation()
-    
+
     # Chat with experimental memory compression
     response = await manager.chat("Hello! Let's discuss quantum computing.")
     print(response)
-    
+
     # Continue the conversation - all history is preserved and accessible
     response = await manager.chat("Can you expand on quantum entanglement?")
     print(response)

@@ -26,9 +26,20 @@ class Config:
     """Main configuration for the hierarchical memory system."""
 
     # Model configuration
-    work_model: str = "claude-sonnet-4"
+    # Default: claude-agent-sonnet (uses Claude Agent SDK with CLI auth - Pro/Max subscription)
+    # Alternative: claude-sonnet-4 (uses direct API with ANTHROPIC_API_KEY)
+    work_model: str = "claude-agent-sonnet"
     embedding_model: str = "text-embedding-3-small"
     request_limit: int = 500
+
+    # Claude Agent SDK specific settings
+    # Permission mode: "default", "acceptEdits", "bypassPermissions"
+    agent_permission_mode: str = "default"
+    # Allowed tools for Claude Agent SDK (empty = no built-in tools, just conversation)
+    agent_allowed_tools: str = ""  # Comma-separated list, e.g., "Read,Glob,Grep"
+    # Use Claude Pro/Max subscription instead of API credits (requires authenticated CLI)
+    # When True, removes ANTHROPIC_API_KEY so CLI uses OAuth from ~/.claude/.credentials.json
+    agent_use_subscription: bool = True
 
     # Hierarchy configuration
     recent_node_limit: int = 10
@@ -86,9 +97,14 @@ class Config:
 
         return cls(
             # Model configuration
-            work_model=os.getenv("WORK_MODEL", "claude-sonnet-4"),
+            # Default: claude-agent-sonnet (uses Claude Agent SDK with CLI auth)
+            work_model=os.getenv("WORK_MODEL", "claude-agent-sonnet"),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
             request_limit=get_env_int("REQUEST_LIMIT", 500),
+            # Claude Agent SDK settings
+            agent_permission_mode=os.getenv("AGENT_PERMISSION_MODE", "default"),
+            agent_allowed_tools=os.getenv("AGENT_ALLOWED_TOOLS", ""),
+            agent_use_subscription=get_env_bool("AGENT_USE_SUBSCRIPTION", True),
             # Hierarchy configuration
             recent_node_limit=get_env_int("RECENT_NODE_LIMIT", 10),
             summary_threshold=get_env_int("SUMMARY_THRESHOLD", 20),

@@ -154,6 +154,7 @@ class ModelProvider(Enum):
     """Supported model providers."""
 
     ANTHROPIC = "anthropic"
+    CLAUDE_AGENT_SDK = "claude_agent_sdk"  # Claude Agent SDK - autonomous agents with built-in tools
     OPENAI = "openai"
     MOONSHOT = "moonshot"
     TOGETHER = "together"
@@ -323,6 +324,90 @@ class ModelRegistry(BaseModel):
 # Default model registry with pre-configured models
 DEFAULT_MODEL_REGISTRY = ModelRegistry(
     models={
+        # ===================================================================
+        # CLAUDE AGENT SDK MODELS (DEFAULT - Recommended)
+        # ===================================================================
+        # These use the Claude Agent SDK which provides:
+        # - Autonomous agent capabilities with built-in tools
+        # - Read/Write/Edit files, Bash commands, Glob, Grep, etc.
+        # - Custom tools via @tool decorator
+        # - Hooks system for lifecycle control
+        # - Automatic context management
+        "claude-agent-opus": ModelConfig(
+            provider=ModelProvider.CLAUDE_AGENT_SDK,
+            model_name="claude-opus-4-5-20251101",
+            api_key_env="ANTHROPIC_API_KEY",
+            context_window=200000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={
+                "family": "claude-4",
+                "tier": "flagship",
+                "agent_sdk": True,
+                "built_in_tools": [
+                    "Read",
+                    "Write",
+                    "Edit",
+                    "Bash",
+                    "Glob",
+                    "Grep",
+                    "WebSearch",
+                    "WebFetch",
+                ],
+            },
+        ),
+        "claude-agent-sonnet": ModelConfig(
+            provider=ModelProvider.CLAUDE_AGENT_SDK,
+            model_name="claude-sonnet-4-20250514",
+            api_key_env="ANTHROPIC_API_KEY",
+            context_window=200000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={
+                "family": "claude-4",
+                "tier": "premium",
+                "agent_sdk": True,
+                "built_in_tools": [
+                    "Read",
+                    "Write",
+                    "Edit",
+                    "Bash",
+                    "Glob",
+                    "Grep",
+                    "WebSearch",
+                    "WebFetch",
+                ],
+            },
+        ),
+        "claude-agent-haiku": ModelConfig(
+            provider=ModelProvider.CLAUDE_AGENT_SDK,
+            model_name="claude-3-5-haiku-20241022",
+            api_key_env="ANTHROPIC_API_KEY",
+            context_window=200000,
+            supports_functions=True,
+            supports_streaming=True,
+            default_temperature=0.3,
+            metadata={
+                "family": "claude-3.5",
+                "tier": "fast",
+                "agent_sdk": True,
+                "built_in_tools": [
+                    "Read",
+                    "Write",
+                    "Edit",
+                    "Bash",
+                    "Glob",
+                    "Grep",
+                    "WebSearch",
+                    "WebFetch",
+                ],
+            },
+        ),
+        # ===================================================================
+        # ANTHROPIC CLAUDE MODELS (Direct API via PydanticAI)
+        # ===================================================================
         # Anthropic Claude models
         "claude-sonnet-4": ModelConfig(
             provider=ModelProvider.ANTHROPIC,
