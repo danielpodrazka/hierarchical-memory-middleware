@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # Type alias for search modes
 SearchMode = Literal["keyword", "semantic", "hybrid"]
 
+# Module-level flag to avoid repeated warnings about missing embeddings
+_embeddings_warning_shown = False
+
 
 class DuckDBStorage:
     """DuckDB storage implementation for conversation nodes."""
@@ -86,15 +89,18 @@ class DuckDBStorage:
 
     def _get_embedder(self):
         """Get or create the embedder instance (lazy initialization)."""
+        global _embeddings_warning_shown
         if self._embedder is None:
             try:
                 from .embeddings import get_embedder, is_embeddings_available
 
                 if not is_embeddings_available():
-                    logger.warning(
-                        "Embeddings dependencies not available. "
-                        "Install with: pip install 'hierarchical-memory-middleware[embeddings]'"
-                    )
+                    if not _embeddings_warning_shown:
+                        logger.warning(
+                            "Embeddings dependencies not available. "
+                            "Install with: pip install 'hierarchical-memory-middleware[embeddings]'"
+                        )
+                        _embeddings_warning_shown = True
                     return None
 
                 self._embedder = get_embedder()
@@ -906,18 +912,29 @@ class DuckDBStorage:
                 last_updated=conv_result[4],
             )
 
+    def _arrow_to_pylist(self, arrow_obj) -> list:
+        """Convert a DuckDB arrow result to a list of dicts.
+
+        Handles both pyarrow.Table (older DuckDB) and pyarrow.RecordBatchReader (newer DuckDB).
+        """
+        # Newer DuckDB returns RecordBatchReader, need to call read_all()
+        if hasattr(arrow_obj, 'read_all'):
+            arrow_obj = arrow_obj.read_all()
+        return arrow_obj.to_pylist()
+
     def _rows_to_nodes(self, result) -> List[ConversationNode]:
         """Convert DuckDB result to ConversationNode objects using PyArrow."""
-        arrow_table = result.arrow()
+        arrow_obj = result.arrow()
+        rows = self._arrow_to_pylist(arrow_obj)
         nodes = [
-            ConversationNode.model_validate(row) for row in arrow_table.to_pylist()
+            ConversationNode.model_validate(row) for row in rows
         ]
         return [self._enhance_node_summary(node) for node in nodes]
 
     def _row_to_single_node(self, result) -> Optional[ConversationNode]:
         """Convert a single DuckDB result row to ConversationNode using PyArrow."""
-        arrow_table = result.arrow()
-        rows = arrow_table.to_pylist()
+        arrow_obj = result.arrow()
+        rows = self._arrow_to_pylist(arrow_obj)
         if not rows:
             return None
         node = ConversationNode.model_validate(rows[0])
