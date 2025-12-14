@@ -59,8 +59,8 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             Full node content including text, metadata, and timestamps
         """
         try:
-            node = await storage.get_node(node_id)
-            if not node or node.conversation_id != conversation_id:
+            node = await storage.get_node(node_id, conversation_id)
+            if not node:
                 return {"error": f"Node {node_id} not found in this conversation"}
 
             return {
