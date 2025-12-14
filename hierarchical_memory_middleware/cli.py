@@ -107,7 +107,7 @@ def get_robust_input(prompt_str: str = "👤 You") -> str:
         sys.stdout.flush()
 
         lines = []
-        waiting_for_send = False  # True = we've shown paste msg and are waiting for Enter
+        showed_paste_message = False  # True = we've shown the "(N lines)" message
 
         DEBUG = os.environ.get("DEBUG_INPUT", "0") == "1"
 
@@ -119,67 +119,63 @@ def get_robust_input(prompt_str: str = "👤 You") -> str:
                 more_coming = has_pending_input(0.05)
 
                 if DEBUG:
-                    print(f"DEBUG >>> line={repr(line)[:60]}, more_coming={more_coming}, lines_count={len(lines)}, waiting={waiting_for_send}")
+                    print(f"DEBUG >>> line={repr(line)[:60]}, more_coming={more_coming}, lines={len(lines)}, showed_msg={showed_paste_message}")
 
                 if more_coming:
                     # More input waiting - we're in a paste, keep reading
-                    lines.append(line)
-                    waiting_for_send = False
+                    if line:  # Don't add empty lines during paste
+                        lines.append(line)
                     continue
 
                 # No more input immediately pending
 
-                if waiting_for_send:
-                    # We showed the paste message - now waiting for user response
-                    if DEBUG:
-                        print(f"DEBUG >>> waiting_for_send branch, line empty={not line}")
-                    if not line:
-                        # Empty line = send (don't add to lines)
-                        if DEBUG:
-                            print(f"DEBUG >>> BREAKING with {len(lines)} lines")
-                        break
-                    else:
-                        # User typed/pasted more content - add it
-                        lines.append(line)
-                        # Check AGAIN if there's more (user might be pasting)
-                        if has_pending_input(0.1):
-                            waiting_for_send = False
-                            continue
-                        # No more coming - update count and keep waiting
-                        line_count = len(lines)
-                        console.print(f"[dim]({line_count} lines) Press Enter to send, or keep typing[/dim]")
-                        console.print("... ", end="", highlight=False)
-                        sys.stdout.flush()
-                        # waiting_for_send stays True
-                        continue
-
-                elif not lines:
-                    # First line - check if it's empty or has content
+                if not lines:
+                    # No lines accumulated yet
                     if line:
-                        # Non-empty first line with no more coming = single line, send immediately
+                        # First non-empty line with nothing pending = single line, send immediately
                         lines.append(line)
                         break
                     else:
-                        # Empty first line - re-prompt
+                        # Empty first line - just re-prompt
                         console.print("> ", end="", highlight=False)
                         sys.stdout.flush()
                         continue
 
+                # We have accumulated lines
+
+                if not line:
+                    # Empty line after accumulated content
+                    if showed_paste_message:
+                        # User pressed Enter after seeing the message - send!
+                        if DEBUG:
+                            print(f"DEBUG >>> User confirmed, BREAKING with {len(lines)} lines")
+                        break
+                    else:
+                        # This empty line is the trailing newline from the paste
+                        # Show message and wait for ONE more Enter
+                        console.print(f"[dim]({len(lines)} lines) Press Enter to send, or keep typing[/dim]")
+                        console.print("... ", end="", highlight=False)
+                        sys.stdout.flush()
+                        showed_paste_message = True
+                        continue
                 else:
-                    # We have accumulated lines and no more input pending
-                    # Add this line and show the paste message
+                    # User typed/pasted more content after the paste
                     lines.append(line)
-                    line_count = len(lines)
-                    console.print(f"[dim]({line_count} lines) Press Enter to send, or keep typing[/dim]")
+                    # Reset - they might paste more
+                    showed_paste_message = False
+                    # Check if more coming
+                    if has_pending_input(0.1):
+                        continue
+                    # No more coming - show updated count
+                    console.print(f"[dim]({len(lines)} lines) Press Enter to send, or keep typing[/dim]")
                     console.print("... ", end="", highlight=False)
                     sys.stdout.flush()
-                    waiting_for_send = True
+                    showed_paste_message = True
                     continue
 
             except EOFError:
-                # Ctrl+D pressed - submit what we have
-                console.print()  # New line after ^D
-                break
+                # Ctrl+D pressed - treat same as empty prompt (exit)
+                raise KeyboardInterrupt()
 
         result = "\n".join(lines)
         return sanitize_input(result.strip())
