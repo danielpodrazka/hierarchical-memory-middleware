@@ -744,3 +744,86 @@ class DuckDBStorage:
             )
 
             return True
+
+    async def get_system_prompt(self, conversation_id: str) -> Optional[str]:
+        """Get the system prompt for a conversation.
+
+        Args:
+            conversation_id: The conversation ID
+
+        Returns:
+            The system prompt text, or None if not set
+        """
+        with self._get_connection() as conn:
+            result = conn.execute(
+                "SELECT system_prompt FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+
+            if result and result[0]:
+                return result[0]
+            return None
+
+    async def set_system_prompt(self, conversation_id: str, content: str) -> bool:
+        """Set or replace the system prompt for a conversation.
+
+        Args:
+            conversation_id: The conversation ID
+            content: The new system prompt content
+
+        Returns:
+            True if successful
+        """
+        # Ensure conversation exists
+        await self._ensure_conversation_exists(conversation_id)
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE conversations
+                SET system_prompt = ?, last_updated = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (content, conversation_id),
+            )
+            return True
+
+    async def append_system_prompt(self, conversation_id: str, content: str) -> str:
+        """Append content to the system prompt for a conversation.
+
+        Args:
+            conversation_id: The conversation ID
+            content: The content to append
+
+        Returns:
+            The updated system prompt
+        """
+        # Ensure conversation exists
+        await self._ensure_conversation_exists(conversation_id)
+
+        with self._get_connection() as conn:
+            # Get current system prompt
+            result = conn.execute(
+                "SELECT system_prompt FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+
+            current_prompt = result[0] if result and result[0] else ""
+
+            # Append new content
+            if current_prompt:
+                new_prompt = f"{current_prompt}\n{content}"
+            else:
+                new_prompt = content
+
+            # Update
+            conn.execute(
+                """
+                UPDATE conversations
+                SET system_prompt = ?, last_updated = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_prompt, conversation_id),
+            )
+
+            return new_prompt

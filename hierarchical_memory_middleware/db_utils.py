@@ -114,7 +114,7 @@ def _run_migrations(conn: duckdb.DuckDBPyConnection) -> None:
         # Check if conversations table exists and has the name column
         tables = conn.execute("SHOW TABLES").fetchall()
         table_names = [table[0] for table in tables]
-        
+
         if 'conversations' in table_names:
             try:
                 # Try to add unique constraint if it doesn't exist
@@ -125,6 +125,24 @@ def _run_migrations(conn: duckdb.DuckDBPyConnection) -> None:
                 logger.debug("Unique constraint already exists or couldn't be added")
     except Exception as e:
         logger.debug(f"Unique constraint migration failed: {e}")
+        pass
+
+    # Migration 3: Add system_prompt column to conversations table
+    try:
+        tables = conn.execute("SHOW TABLES").fetchall()
+        table_names = [table[0] for table in tables]
+
+        if 'conversations' in table_names:
+            try:
+                conn.execute("SELECT system_prompt FROM conversations LIMIT 1").fetchall()
+                logger.debug("system_prompt column already exists")
+            except Exception:
+                # Column doesn't exist, add it
+                logger.debug("Adding system_prompt column to conversations table...")
+                conn.execute("ALTER TABLE conversations ADD COLUMN system_prompt TEXT")
+                logger.debug("system_prompt column added")
+    except Exception as e:
+        logger.debug(f"system_prompt migration failed: {e}")
         pass
 
     logger.debug("Database migrations completed")
@@ -190,6 +208,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             compression_stats JSON,
             current_goal TEXT,
             key_decisions JSON,
+            system_prompt TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )

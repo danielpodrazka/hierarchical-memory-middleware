@@ -347,3 +347,65 @@ async def test_get_conversation_stats(storage):
     assert stats.total_nodes == 4  # 2 turns * 2 nodes each
     assert CompressionLevel.FULL in stats.compression_stats
     assert stats.compression_stats[CompressionLevel.FULL] == 4
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_operations(storage):
+    """Test system prompt get/set/append operations."""
+    conversation_id = "test-system-prompt"
+
+    # Initially, system prompt should be None/empty
+    content = await storage.get_system_prompt(conversation_id)
+    assert content is None
+
+    # Set the system prompt
+    await storage.set_system_prompt(conversation_id, "User prefers concise responses")
+    content = await storage.get_system_prompt(conversation_id)
+    assert content == "User prefers concise responses"
+
+    # Replace the system prompt
+    await storage.set_system_prompt(conversation_id, "New prompt content")
+    content = await storage.get_system_prompt(conversation_id)
+    assert content == "New prompt content"
+
+    # Append to the system prompt
+    updated = await storage.append_system_prompt(conversation_id, "Additional note")
+    assert updated == "New prompt content\nAdditional note"
+
+    # Verify the appended content
+    content = await storage.get_system_prompt(conversation_id)
+    assert content == "New prompt content\nAdditional note"
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_append_to_empty(storage):
+    """Test appending to an empty system prompt."""
+    conversation_id = "test-append-empty"
+
+    # Append to non-existent/empty prompt
+    updated = await storage.append_system_prompt(conversation_id, "First note")
+    assert updated == "First note"
+
+    # Verify
+    content = await storage.get_system_prompt(conversation_id)
+    assert content == "First note"
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_multiline(storage):
+    """Test system prompt with multiline content."""
+    conversation_id = "test-multiline"
+
+    multiline_content = """# User Preferences
+- Prefers TypeScript
+- Senior developer, skip basics
+- Working on auth module
+
+# Current Task
+Debugging JWT validation"""
+
+    await storage.set_system_prompt(conversation_id, multiline_content)
+    content = await storage.get_system_prompt(conversation_id)
+    assert content == multiline_content
+    assert "User Preferences" in content
+    assert "Current Task" in content

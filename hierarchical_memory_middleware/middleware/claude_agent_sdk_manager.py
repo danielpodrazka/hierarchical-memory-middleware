@@ -190,6 +190,9 @@ class ClaudeAgentSDKConversationManager:
                 "mcp__memory__search_memory",
                 "mcp__memory__get_memory_stats",
                 "mcp__memory__get_recent_nodes",
+                "mcp__memory__get_system_prompt",
+                "mcp__memory__set_system_prompt",
+                "mcp__memory__append_to_system_prompt",
             ]
             allowed_tools.extend(memory_tools)
 
@@ -306,8 +309,8 @@ class ClaudeAgentSDKConversationManager:
         # Build memory context
         memory_context = await self._build_memory_context()
 
-        # Build system prompt with memory context
-        system_prompt = self._build_system_prompt(memory_context)
+        # Build system prompt with memory context and scratchpad
+        system_prompt = await self._build_system_prompt(memory_context)
 
         # Create options for the agent (handles subscription mode)
         options = self._build_agent_options(system_prompt)
@@ -376,8 +379,8 @@ class ClaudeAgentSDKConversationManager:
         # Build memory context
         memory_context = await self._build_memory_context()
 
-        # Build system prompt with memory context
-        system_prompt = self._build_system_prompt(memory_context)
+        # Build system prompt with memory context and scratchpad
+        system_prompt = await self._build_system_prompt(memory_context)
 
         # Create options for the agent (handles subscription mode)
         options = self._build_agent_options(system_prompt)
@@ -466,8 +469,8 @@ class ClaudeAgentSDKConversationManager:
         # Check and perform compression
         await self._check_and_compress()
 
-    def _build_system_prompt(self, memory_context: str) -> str:
-        """Build the system prompt including memory context.
+    async def _build_system_prompt(self, memory_context: str) -> str:
+        """Build the system prompt including memory context and user scratchpad.
 
         Args:
             memory_context: The compressed conversation history
@@ -486,9 +489,20 @@ You have access to the conversation history below, organized hierarchically:
 Use this context to maintain continuity and reference past discussions when relevant.
 """
 
+        # Build the full system prompt
+        parts = [base_prompt]
+
+        # Add user's scratchpad/system prompt if set
+        if self.conversation_id:
+            scratchpad = await self.storage.get_system_prompt(self.conversation_id)
+            if scratchpad:
+                parts.append(f"\n=== YOUR SCRATCHPAD / NOTES ===\n{scratchpad}\n")
+
+        # Add memory context
         if memory_context:
-            return f"{base_prompt}\n\n{memory_context}"
-        return base_prompt
+            parts.append(f"\n{memory_context}")
+
+        return "".join(parts)
 
     async def _check_and_compress(self) -> None:
         """Check if compression is needed and perform it."""

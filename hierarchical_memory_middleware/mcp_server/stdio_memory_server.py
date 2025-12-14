@@ -191,6 +191,86 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             logger.error(f"Error getting recent nodes: {e}")
             return {"error": str(e)}
 
+    @mcp.tool()
+    async def get_system_prompt() -> Dict[str, Any]:
+        """Get the current system prompt / scratchpad for this conversation.
+
+        Use this tool to read your persistent notes and behavioral preferences
+        that you've saved for this conversation session.
+
+        Returns:
+            The current system prompt content, or empty if not set
+        """
+        try:
+            content = await storage.get_system_prompt(conversation_id)
+            return {
+                "success": True,
+                "conversation_id": conversation_id,
+                "content": content or "",
+                "has_content": content is not None and len(content) > 0,
+            }
+        except Exception as e:
+            logger.error(f"Error getting system prompt: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def set_system_prompt(content: str) -> Dict[str, Any]:
+        """Set or replace the system prompt / scratchpad for this conversation.
+
+        Use this tool to save persistent notes, behavioral preferences,
+        or context that should persist across the conversation. This acts
+        as a scratchpad where you can write notes to yourself.
+
+        Examples of what to store:
+        - User preferences: "User prefers concise responses"
+        - Project context: "Working on TypeScript strict mode project"
+        - Behavioral notes: "Remember: don't explain basics, user is senior dev"
+        - Task tracking: "Currently debugging auth flow in middleware"
+
+        Args:
+            content: The new system prompt content (replaces existing)
+
+        Returns:
+            Success status and the new content
+        """
+        try:
+            await storage.set_system_prompt(conversation_id, content)
+            return {
+                "success": True,
+                "conversation_id": conversation_id,
+                "content": content,
+                "action": "replaced",
+            }
+        except Exception as e:
+            logger.error(f"Error setting system prompt: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def append_to_system_prompt(content: str) -> Dict[str, Any]:
+        """Append content to the system prompt / scratchpad.
+
+        Use this tool to add notes without replacing existing content.
+        Useful for incrementally building up context or adding new
+        observations throughout the conversation.
+
+        Args:
+            content: The content to append (will be added on a new line)
+
+        Returns:
+            Success status and the updated full content
+        """
+        try:
+            updated = await storage.append_system_prompt(conversation_id, content)
+            return {
+                "success": True,
+                "conversation_id": conversation_id,
+                "content": updated,
+                "action": "appended",
+            }
+        except Exception as e:
+            logger.error(f"Error appending to system prompt: {e}")
+            return {"error": str(e)}
+
     return mcp
 
 
