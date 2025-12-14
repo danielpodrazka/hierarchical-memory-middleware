@@ -20,6 +20,7 @@ def create_conversation_manager(
     mcp_server_url: Optional[str] = None,
     external_mcp_servers: Optional[List] = None,
     enable_memory_tools: bool = True,
+    agentic_mode: bool = False,
 ) -> Union[HierarchicalConversationManager, ClaudeAgentSDKConversationManager]:
     """Factory function to create the appropriate conversation manager.
 
@@ -33,6 +34,7 @@ def create_conversation_manager(
         mcp_server_url: URL for the MCP memory server (for non-SDK managers)
         external_mcp_servers: Additional MCP servers (for non-SDK managers)
         enable_memory_tools: Enable memory tools for Claude Agent SDK (default: True)
+        agentic_mode: Enable agentic mode with auto-continue and yield_to_human (default: False)
 
     Returns:
         The appropriate conversation manager instance
@@ -67,6 +69,7 @@ def create_conversation_manager(
             allowed_tools=allowed_tools,
             permission_mode=config.agent_permission_mode,
             enable_memory_tools=enable_memory_tools,
+            agentic_mode=agentic_mode,
         )
     else:
         # Use the standard PydanticAI-based manager

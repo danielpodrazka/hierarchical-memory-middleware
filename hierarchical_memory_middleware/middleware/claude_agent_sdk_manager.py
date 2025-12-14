@@ -79,6 +79,7 @@ class ClaudeAgentSDKConversationManager:
         allowed_tools: Optional[List[str]] = None,
         permission_mode: str = "default",
         enable_memory_tools: bool = True,
+        agentic_mode: bool = False,
     ):
         """Initialize the Claude Agent SDK conversation manager.
 
@@ -92,12 +93,14 @@ class ClaudeAgentSDKConversationManager:
                 - "acceptEdits": Auto-approve file edits
                 - "bypassPermissions": No prompts (for automation)
             enable_memory_tools: Whether to enable memory tools via stdio subprocess (default: True)
+            agentic_mode: Whether agentic mode is enabled (auto-continue with yield_to_human)
         """
         self.config = config
         self.model_config = model_config
         self.conversation_id: Optional[str] = None
         self.permission_mode = permission_mode
         self.enable_memory_tools = enable_memory_tools
+        self.agentic_mode = agentic_mode
 
         config.setup_logging()
 
@@ -193,6 +196,7 @@ class ClaudeAgentSDKConversationManager:
                 "mcp__memory__get_system_prompt",
                 "mcp__memory__set_system_prompt",
                 "mcp__memory__append_to_system_prompt",
+                "mcp__memory__yield_to_human",
             ]
             allowed_tools.extend(memory_tools)
 
@@ -493,6 +497,26 @@ Use this context to maintain continuity and reference past discussions when rele
 
         # Build the full system prompt
         parts = [base_prompt]
+
+        # Add agentic mode instructions if enabled
+        if self.agentic_mode:
+            agentic_instructions = """
+=== AGENTIC MODE ===
+You are running in agentic mode. The system will automatically send "continue" messages to keep you working until you explicitly signal that you need human input.
+
+**IMPORTANT: You MUST call the `yield_to_human` tool when:**
+- You have completed the user's request
+- You need clarification or a decision from the user
+- You are blocked and need additional information
+- You've reached a natural stopping point and want feedback
+
+**Do NOT just say "let me know if you need anything else" - call yield_to_human instead.**
+
+Example: After completing a task, call `yield_to_human(reason="Task complete - implemented the feature as requested")`
+
+If you don't call yield_to_human, the system will automatically prompt you to continue working.
+"""
+            parts.append(agentic_instructions)
 
         # Add user's scratchpad/system prompt if set
         if self.conversation_id:

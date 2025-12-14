@@ -271,6 +271,34 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             logger.error(f"Error appending to system prompt: {e}")
             return {"error": str(e)}
 
+    @mcp.tool()
+    async def yield_to_human(reason: str = "Task complete") -> Dict[str, Any]:
+        """Signal that you need human input or have completed the current task.
+
+        Use this tool in agentic mode when:
+        - You've finished a multi-step task and want human review
+        - You need clarification or a decision from the user
+        - You're blocked and need additional information
+        - You've reached a natural stopping point
+
+        The chat interface will detect this tool call and pause for human input
+        instead of auto-continuing.
+
+        Args:
+            reason: Brief explanation of why you're yielding (e.g., "Task complete",
+                   "Need clarification on X", "Blocked on Y")
+
+        Returns:
+            Confirmation that the yield signal was sent
+        """
+        # This tool is a signal - the actual pausing logic is in the chat loop
+        return {
+            "success": True,
+            "action": "yield_to_human",
+            "reason": reason,
+            "message": f"Yielding to human: {reason}",
+        }
+
     return mcp
 
 

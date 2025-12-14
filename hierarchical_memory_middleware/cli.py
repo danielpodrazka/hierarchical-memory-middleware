@@ -253,12 +253,17 @@ def chat(
         "--dangerously-skip-permissions",
         help="Skip all permission prompts (use with caution)",
     ),
+    agentic: bool = typer.Option(
+        False,
+        "--agentic",
+        help="Agentic mode: AI continues autonomously until it yields to human or is interrupted",
+    ),
 ):
     """Start an interactive chat session with MCP memory tools."""
     asyncio.run(
         _chat_session(
             conversation_id, name, model, db_path, recent_limit, mcp_port, export_dir, stream,
-            dangerously_skip_permissions
+            dangerously_skip_permissions, agentic
         )
     )
 
@@ -273,6 +278,7 @@ async def _chat_session(
     export_dir: str,
     stream: bool,
     dangerously_skip_permissions: bool = False,
+    agentic: bool = False,
 ):
     """Run the interactive chat session with MCP integration."""
     # Load configuration
@@ -305,6 +311,8 @@ async def _chat_session(
         console.print("[cyan]🧠 Memory tools: Built-in (via stdio subprocess)[/cyan]")
     if dangerously_skip_permissions:
         console.print("[bold red]⚠️  DANGER: All permissions bypassed![/bold red]")
+    if agentic:
+        console.print("[bold cyan]🤖 AGENTIC MODE: AI will continue until done or interrupted (Ctrl+C)[/bold cyan]")
     console.print(f"🔗 Recent nodes limit: {config.recent_node_limit}")
     console.print(f"📈 Summary threshold: {config.summary_threshold}")
     console.print(f"⚡ Streaming: {'Enabled' if stream else 'Disabled'}")
@@ -347,6 +355,7 @@ async def _chat_session(
             config=config,
             mcp_server_url=mcp_server_url,
             external_mcp_servers=external_clients if external_clients else None,
+            agentic_mode=agentic,
         )
 
         # Resolve conversation identifier
@@ -442,11 +451,22 @@ async def _chat_session(
         )
         console.print()
 
-        # Main chat loop
+        # Main chat loop state
+        yielded_to_human = True  # Start by waiting for user input
+        interrupted = False
+
         while True:
             try:
-                # Get user input
-                user_input = typer.prompt("👤 You", type=str).strip()
+                # Determine if we should auto-continue or wait for human input
+                if agentic and not yielded_to_human and not interrupted:
+                    # Auto-continue mode - AI keeps working
+                    user_input = "continue (auto-response)"
+                    console.print("[dim]🔄 Auto-continuing...[/dim]")
+                else:
+                    # Wait for human input
+                    yielded_to_human = False  # Reset for next iteration
+                    interrupted = False
+                    user_input = typer.prompt("👤 You", type=str).strip()
 
                 if not user_input:
                     continue
@@ -454,6 +474,7 @@ async def _chat_session(
                 # Handle special commands
                 if user_input.startswith("/"):
                     await handle_chat_command(user_input, manager, conv_id, export_dir)
+                    yielded_to_human = True  # After commands, wait for next user input
                     continue
 
                 # Generate AI response
@@ -481,18 +502,28 @@ async def _chat_session(
                         elif isinstance(event, ToolCallEvent):
                             # Track this tool call for later result matching
                             pending_tools[event.tool_id] = event.tool_name
-                            # Display tool call with collapsible style
-                            tool_input_str = json.dumps(event.tool_input, indent=2)
-                            if len(tool_input_str) > 200:
-                                tool_input_preview = tool_input_str[:200] + "..."
+                            # Check if this is a yield_to_human call
+                            if event.tool_name == "mcp__memory__yield_to_human":
+                                yielded_to_human = True
+                                reason = event.tool_input.get("reason", "Task complete")
+                                console.print()
+                                console.print(f"  [bold yellow]⏸️  Yielding to human: {reason}[/bold yellow]")
                             else:
-                                tool_input_preview = tool_input_str
-                            console.print()
-                            console.print(f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]")
-                            console.print(f"    [dim]{tool_input_preview}[/dim]")
+                                # Display tool call with collapsible style
+                                tool_input_str = json.dumps(event.tool_input, indent=2)
+                                if len(tool_input_str) > 200:
+                                    tool_input_preview = tool_input_str[:200] + "..."
+                                else:
+                                    tool_input_preview = tool_input_str
+                                console.print()
+                                console.print(f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]")
+                                console.print(f"    [dim]{tool_input_preview}[/dim]")
                         elif isinstance(event, ToolResultEvent):
                             # Get tool name from pending calls
                             tool_name = pending_tools.get(event.tool_id, "unknown")
+                            # Skip displaying yield_to_human results (already shown)
+                            if tool_name == "mcp__memory__yield_to_human":
+                                continue
                             # Display tool result with tool name
                             result_preview = event.content[:300] if len(event.content) > 300 else event.content
                             # Truncate to first few lines
@@ -522,16 +553,30 @@ async def _chat_session(
                         )
                     )
                     console.print()
+                    # In non-streaming mode, always yield after response
+                    yielded_to_human = True
 
                 # Save conversation state
                 await save_conversation_to_json(manager, conv_id, export_dir)
 
+                # If not in agentic mode, always wait for human input
+                if not agentic:
+                    yielded_to_human = True
+
             except KeyboardInterrupt:
-                console.print("\n[yellow]👋 Chat interrupted by user[/yellow]")
-                break
+                if agentic and not yielded_to_human:
+                    # In agentic mode, interrupt pauses for human input
+                    console.print("\n[yellow]⏸️  Interrupted - waiting for your input[/yellow]")
+                    interrupted = True
+                    yielded_to_human = True
+                else:
+                    # Normal mode - exit chat
+                    console.print("\n[yellow]👋 Chat interrupted by user[/yellow]")
+                    break
             except Exception as e:
                 console.print(f"[red]❌ Error: {str(e)}[/red]")
                 logger.exception("Chat error")
+                yielded_to_human = True  # Wait for user after error
                 continue
 
     except Exception as e:
@@ -1394,6 +1439,8 @@ async def _switch_conversation(
             mcp_port,
             ".conversations",
             True,  # Enable streaming by default
+            False,  # dangerously_skip_permissions
+            False,  # agentic mode
         )
     except ValueError as e:
         console.print(f"[red]❌ {e}[/red]")
