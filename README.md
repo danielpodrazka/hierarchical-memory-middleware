@@ -108,6 +108,16 @@ HMM approach:          Read file → edit with confidence → context compresses
 | **Latency** | More tool calls, but smaller payloads | Fewer calls, but larger payloads |
 | **Accuracy** | Fresh reads ensure current state | May reference stale information |
 | **Reliability** | Explicit retrieval = intentional | Passive context = may miss details |
+| **KV-caching** | Cannot benefit (context changes) | Can cache static prefixes |
+
+**On KV-Caching:**
+
+Modern LLM providers use KV-caching to speed up inference when the beginning of a prompt stays the same across requests. With HMM, the context changes on every turn as compression levels shift and summaries update, which means we can't benefit from KV-cache hits.
+
+However, this trade-off is worth it because:
+- **Token savings outweigh cache benefits**: Compressing 10k tokens of old context to 500 tokens of summaries saves far more than KV-caching would on repeated inference
+- **Better context management**: The structured hierarchy helps the AI understand what information is available and how to retrieve it
+- **No stale cache issues**: Fresh context on every turn means no risk of cached representations becoming outdated
 
 The key insight: **a limitation (needing to re-read) actually enforces a better practice**. By not having infinite passive memory, the AI is forced to verify its assumptions against the actual current state of the codebase.
 
