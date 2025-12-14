@@ -775,9 +775,11 @@ async def _chat_session(
                             conv_id, compact_large_pastes=True
                         )
                     except KeyboardInterrupt:
-                        # Handle Ctrl+C during input prompt - in agentic mode, just continue
+                        # Handle Ctrl+C/Ctrl+D during input prompt
                         console.print()  # New line after ^C
                         if agentic:
+                            # Ensure we don't auto-continue after interrupt
+                            yielded_to_human = True
                             continue
                         else:
                             break
