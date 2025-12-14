@@ -760,13 +760,18 @@ async def _chat_session(
 
         while True:
             try:
+                # Debug: Log state at decision point
+                logger.debug(f"DEBUG: Loop start - agentic={agentic}, yielded_to_human={yielded_to_human}, interrupted={interrupted}")
+
                 # Determine if we should auto-continue or wait for human input
                 if agentic and not yielded_to_human and not interrupted:
                     # Auto-continue mode - AI keeps working
                     user_input = "continue (auto-response)"
                     console.print("[dim]🔄 Auto-continuing...[/dim]")
+                    logger.debug("DEBUG: Auto-continue triggered - yielded_to_human was False at decision point")
                 else:
                     # Wait for human input
+                    logger.debug(f"DEBUG: Waiting for human input (yielded_to_human={yielded_to_human})")
                     yielded_to_human = False  # Reset for next iteration
                     interrupted = False
                     try:
@@ -830,6 +835,7 @@ async def _chat_session(
                             elif isinstance(event, ToolCallEvent):
                                 # Track this tool call for later result matching
                                 pending_tools[event.tool_id] = event.tool_name
+                                logger.debug(f"DEBUG: ToolCallEvent received - tool_name={event.tool_name}")
                                 # Check if this is a yield_to_human call
                                 if event.tool_name == "mcp__memory__yield_to_human":
                                     yielded_to_human = True
@@ -840,6 +846,7 @@ async def _chat_session(
                                     console.print(
                                         f"  [bold yellow]⏸️  Yielding to human: {rich_escape(reason)}[/bold yellow]"
                                     )
+                                    logger.debug(f"DEBUG: yield_to_human detected, flag set to True")
                                 else:
                                     # Display tool call with collapsible style
                                     tool_input_str = json.dumps(
@@ -955,6 +962,9 @@ async def _chat_session(
 
                 # Save conversation state
                 await save_conversation_to_json(manager, conv_id, export_dir)
+
+                # Debug: Log flag state before decision
+                logger.debug(f"DEBUG: After stream complete - agentic={agentic}, yielded_to_human={yielded_to_human}, interrupted={interrupted}")
 
                 # If not in agentic mode, always wait for human input
                 if not agentic:
