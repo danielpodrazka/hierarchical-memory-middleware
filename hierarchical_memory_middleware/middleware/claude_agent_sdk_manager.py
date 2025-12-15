@@ -61,7 +61,7 @@ from ..config import Config
 from ..storage import DuckDBStorage
 from ..compression import TfidfCompressor, CompressionManager
 from ..advanced_hierarchy import AdvancedCompressionManager
-from ..models import CompressionLevel, NodeType, HierarchyThresholds, ModelConfig
+from ..models import CompressionLevel, NodeType, HierarchyThresholds, ModelConfig, ConversationNode
 
 logger = logging.getLogger(__name__)
 

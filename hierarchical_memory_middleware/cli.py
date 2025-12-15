@@ -1162,11 +1162,19 @@ async def show_conversation_summary(manager):
     try:
         summary = await manager.get_conversation_summary()
         if "error" not in summary:
+            # Get compression levels from the stats
+            levels = summary.get('compression_levels', {})
+            full_count = levels.get('full', 0)
+            summary_count = levels.get('summary', 0)
+            meta_count = levels.get('meta', 0)
+            archive_count = levels.get('archive', 0)
+            compressed_count = summary_count + meta_count + archive_count
+
             console.print(
                 Panel(
                     f"📊 Total nodes: {summary.get('total_nodes', 0)}\n"
-                    f"🔄 Recent nodes: {summary.get('recent_nodes', 0)}\n"
-                    f"🗜️ Compressed nodes: {summary.get('compressed_nodes', 0)}",
+                    f"🔄 Recent nodes (full): {full_count}\n"
+                    f"🗜️ Compressed nodes: {compressed_count} (summary: {summary_count}, meta: {meta_count}, archive: {archive_count})",
                     title="📋 Conversation Summary",
                     border_style="blue",
                 )
