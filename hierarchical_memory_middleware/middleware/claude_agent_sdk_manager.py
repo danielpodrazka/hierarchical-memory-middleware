@@ -618,16 +618,60 @@ If you don't call yield_to_human, the system will automatically prompt you to co
         return "".join(parts)
 
     async def _check_and_compress(self) -> None:
-        """Check if compression is needed and perform it."""
+        """Check if advanced hierarchical compression is needed and perform it."""
         if not self.conversation_id:
             return
 
-        nodes = await self.storage.get_conversation_nodes(self.conversation_id)
-        full_nodes = [n for n in nodes if n.level == CompressionLevel.FULL]
+        try:
+            # Get all nodes for this conversation
+            all_nodes = await self.storage.get_conversation_nodes(self.conversation_id)
 
-        # Compress if we exceed the threshold
-        if len(full_nodes) > self.hierarchy_thresholds.summary_threshold:
-            await self._compress_old_nodes(full_nodes)
+            if not all_nodes:
+                return
+
+            logger.debug(f"Checking hierarchy compression for {len(all_nodes)} nodes")
+
+            # Use advanced hierarchy compression system (handles FULL→SUMMARY, SUMMARY→META, META→ARCHIVE)
+            compression_results = (
+                await self.compression_manager.process_hierarchy_compression(
+                    nodes=all_nodes, storage=self.storage
+                )
+            )
+
+            # Log the results
+            if compression_results.get("error"):
+                logger.error(
+                    f"Hierarchy compression error: {compression_results['error']}"
+                )
+                return
+
+            total_processed = compression_results.get("total_processed", 0)
+            if total_processed > 0:
+                logger.debug(
+                    f"Advanced hierarchy compression completed: "
+                    f"{compression_results.get('summary_compressed', 0)} summary compressions, "
+                    f"{compression_results.get('meta_groups_created', 0)} META groups created, "
+                    f"{compression_results.get('archive_compressed', 0)} archive compressions"
+                )
+            else:
+                logger.debug("No hierarchy compression needed at this time")
+
+        except Exception as e:
+            logger.exception(
+                f"Error during advanced hierarchy compression: {str(e)}", exc_info=True
+            )
+
+            # Fallback to simple compression if advanced fails
+            try:
+                logger.debug("Falling back to simple compression system")
+                nodes = await self.storage.get_conversation_nodes(self.conversation_id)
+                full_nodes = [n for n in nodes if n.level == CompressionLevel.FULL]
+
+                # Compress if we exceed the threshold
+                if len(full_nodes) > self.hierarchy_thresholds.summary_threshold:
+                    await self._compress_old_nodes(full_nodes)
+            except Exception as fallback_error:
+                logger.error(f"Fallback compression also failed: {str(fallback_error)}")
 
     async def _compress_old_nodes(self, full_nodes: list) -> None:
         """Compress older nodes to SUMMARY level.
@@ -718,7 +762,9 @@ If you don't call yield_to_human, the system will automatically prompt you to co
         Returns:
             Full content of the node, or None if not found
         """
-        node = await self.storage.get_node(node_id)
+        if not self.conversation_id:
+            return None
+        node = await self.storage.get_node(node_id, self.conversation_id)
         if node:
             return node.content
         return None
@@ -795,8 +841,8 @@ If you don't call yield_to_human, the system will automatically prompt you to co
         Returns:
             Node details or None if not found
         """
-        node = await self.storage.get_node(node_id)
-        if not node or node.conversation_id != conversation_id:
+        node = await self.storage.get_node(node_id, conversation_id)
+        if not node:
             return None
 
         return {
