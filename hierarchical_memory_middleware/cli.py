@@ -43,12 +43,63 @@ app = typer.Typer(
 )
 console = Console()
 
-# Directory for storing large pasted content
+# Directory for storing large pasted content (temporary files)
 PASTE_STORAGE_DIR = Path(tempfile.gettempdir()) / "hmm_paste_storage"
 
 # Thresholds for large paste handling
 LARGE_PASTE_THRESHOLD = 5000  # characters
 LARGE_PASTE_LINES_THRESHOLD = 8  # lines
+
+
+def format_edit_diff(old_string: str, new_string: str, file_path: str, max_lines: int = 10) -> str:
+    """Format an Edit tool call as a diff-style display.
+
+    Shows old text with red background and new text with green background,
+    similar to GitHub's diff view.
+
+    Args:
+        old_string: The text being replaced
+        new_string: The replacement text
+        file_path: The file being edited
+        max_lines: Maximum lines to show for each section
+
+    Returns:
+        Formatted string for Rich console
+    """
+    from rich.text import Text
+
+    def truncate_lines(text: str, max_lines: int) -> tuple[str, int]:
+        """Truncate text to max_lines, return (truncated_text, remaining_count)."""
+        lines = text.split('\n')
+        if len(lines) <= max_lines:
+            return text, 0
+        return '\n'.join(lines[:max_lines]), len(lines) - max_lines
+
+    # Truncate if needed
+    old_truncated, old_remaining = truncate_lines(old_string, max_lines)
+    new_truncated, new_remaining = truncate_lines(new_string, max_lines)
+
+    # Build the output
+    output_parts = []
+    output_parts.append(f"    [dim]📁 {file_path}[/dim]")
+
+    # Show old string with muted red background (GitHub-style diff)
+    if old_string:
+        for line in old_truncated.split('\n'):
+            escaped_line = rich_escape(line) if line else " "
+            output_parts.append(f"    [white on dark_red]- {escaped_line}[/white on dark_red]")
+        if old_remaining > 0:
+            output_parts.append(f"    [dim]  ... ({old_remaining} more lines)[/dim]")
+
+    # Show new string with muted green background
+    if new_string:
+        for line in new_truncated.split('\n'):
+            escaped_line = rich_escape(line) if line else " "
+            output_parts.append(f"    [white on dark_green]+ {escaped_line}[/white on dark_green]")
+        if new_remaining > 0:
+            output_parts.append(f"    [dim]  ... ({new_remaining} more lines)[/dim]")
+
+    return '\n'.join(output_parts)
 
 
 def sanitize_input(text: str) -> str:
@@ -849,22 +900,33 @@ async def _chat_session(
                                     logger.debug(f"DEBUG: yield_to_human detected, flag set to True")
                                 else:
                                     # Display tool call with collapsible style
-                                    tool_input_str = json.dumps(
-                                        event.tool_input, indent=2
-                                    )
-                                    if len(tool_input_str) > 200:
-                                        tool_input_preview = (
-                                            tool_input_str[:200] + "..."
-                                        )
-                                    else:
-                                        tool_input_preview = tool_input_str
                                     console.print()
                                     console.print(
                                         f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]"
                                     )
-                                    console.print(
-                                        f"    [dim]{rich_escape(tool_input_preview)}[/dim]"
-                                    )
+
+                                    # Special formatting for Edit tool - show diff-style
+                                    if event.tool_name == "Edit" and "old_string" in event.tool_input:
+                                        diff_output = format_edit_diff(
+                                            old_string=event.tool_input.get("old_string", ""),
+                                            new_string=event.tool_input.get("new_string", ""),
+                                            file_path=event.tool_input.get("file_path", "unknown"),
+                                        )
+                                        console.print(diff_output)
+                                    else:
+                                        # Default formatting for other tools
+                                        tool_input_str = json.dumps(
+                                            event.tool_input, indent=2
+                                        )
+                                        if len(tool_input_str) > 200:
+                                            tool_input_preview = (
+                                                tool_input_str[:200] + "..."
+                                            )
+                                        else:
+                                            tool_input_preview = tool_input_str
+                                        console.print(
+                                            f"    [dim]{rich_escape(tool_input_preview)}[/dim]"
+                                        )
                             elif isinstance(event, ToolResultEvent):
                                 # Get tool name from pending calls
                                 tool_name = pending_tools.get(event.tool_id, "unknown")
