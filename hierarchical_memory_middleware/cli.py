@@ -1,4 +1,4 @@
-"""Consolidated CLI interface for hierarchical memory middleware with MCP integration."""
+"""Consolidated CLI interface for hierarchical memory middleware with full MCP integration and streaming support."""
 
 import asyncio
 import hashlib
@@ -27,7 +27,7 @@ from rich.status import Status
 from rich.markup import escape as rich_escape
 
 from .config import Config
-from .middleware import create_conversation_manager, ToolCallEvent, ToolResultEvent
+from .middleware import create_conversation_manager, ToolCallStartEvent, ToolCallEvent, ToolResultEvent
 from .middleware.conversation_manager import HierarchicalConversationManager
 from .middleware.claude_agent_sdk_manager import ClaudeAgentSDKConversationManager
 from .models import CompressionLevel, NodeType
@@ -51,45 +51,34 @@ LARGE_PASTE_THRESHOLD = 5000  # characters
 LARGE_PASTE_LINES_THRESHOLD = 8  # lines
 
 
-def format_edit_diff(old_string: str, new_string: str, file_path: str, max_lines: int = 10) -> str:
+def format_edit_diff(old_string: str, new_string: str, file_path: str, max_output_lines: int = 100) -> str:
     """Format an Edit tool call as a diff-style display.
 
     Shows full old/new lines with word-level highlighting, inspired by GitHub's
     split diff view. Full lines are displayed with -/+ prefixes, but only the
     specific changed words get highlighted with colored backgrounds.
 
+    This function processes the old and new strings, computes a line-level diff,
+    and then for changed lines computes a word-level diff to highlight specific changes.
+
     Args:
         old_string: The text being replaced
         new_string: The replacement text
         file_path: The file being edited
-        max_lines: Maximum lines to show
+        max_output_lines: Maximum lines to show in output (default 100, truncates at end)
 
     Returns:
-        Formatted string for Rich console
+        Formatted string for Rich console with diff highlighting
     """
     import difflib
-
-    def truncate_lines(text: str, max_lines: int) -> tuple[str, int]:
-        """Truncate text to max_lines, return (truncated_text, remaining_count)."""
-        lines = text.split('\n')
-        if len(lines) <= max_lines:
-            return text, 0
-        return '\n'.join(lines[:max_lines]), len(lines) - max_lines
 
     # Build the output
     output_parts = []
     output_parts.append(f"    [dim]📁 {file_path}[/dim]")
 
-    # Get line-by-line diff
+    # Get line-by-line diff - NO truncation before diffing!
     old_lines = old_string.split('\n')
     new_lines = new_string.split('\n')
-
-    # Truncate if needed
-    total_lines = max(len(old_lines), len(new_lines))
-    truncated = total_lines > max_lines
-    if truncated:
-        old_lines = old_lines[:max_lines]
-        new_lines = new_lines[:max_lines]
 
     # Use SequenceMatcher for line-level diff
     matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
@@ -153,8 +142,10 @@ def format_edit_diff(old_string: str, new_string: str, file_path: str, max_lines
                 escaped = rich_escape(line) if line else " "
                 output_parts.append(f"    [#66cc66]+ [white on #1a4a1a]{escaped}[/white on #1a4a1a][/#66cc66]")
 
-    if truncated:
-        remaining = total_lines - max_lines
+    # Truncate output if too long (but we've already processed all the diffs)
+    if len(output_parts) > max_output_lines:
+        remaining = len(output_parts) - max_output_lines
+        output_parts = output_parts[:max_output_lines]
         output_parts.append(f"    [dim]  ... ({remaining} more lines)[/dim]")
 
     return '\n'.join(output_parts)
@@ -931,20 +922,98 @@ async def _chat_session(
                     else:
                         stream_iter = manager.chat_stream(user_input)
 
+                    # Track active tool status for progress indicator
+                    active_tool_status = None
+                    active_tool_name = None
+
+                    # Track last event time for timeout detection
+                    last_event_time = time.time()
+                    timeout_warning_shown = False
+                    timeout_seconds = 15  # Show warning after 15 seconds of no events
+
+                    # Background task to monitor for timeouts
+                    timeout_monitor_task = None
+
+                    async def monitor_timeout():
+                        nonlocal timeout_warning_shown
+                        while True:
+                            await asyncio.sleep(1)
+                            elapsed = time.time() - last_event_time
+                            if elapsed > timeout_seconds and not timeout_warning_shown and not active_tool_status:
+                                # Show timeout warning
+                                timeout_warning_shown = True
+                                console.print(
+                                    f"\n  [yellow]⚠️  No response for {int(elapsed)}s - AI provider may be slow or hung[/yellow]",
+                                    end=""
+                                )
+                            elif elapsed > timeout_seconds and timeout_warning_shown and not active_tool_status:
+                                # Update the elapsed time every 5 seconds
+                                if int(elapsed) % 5 == 0:
+                                    console.print(f" ({int(elapsed)}s)", end="")
+
+                    timeout_monitor_task = asyncio.create_task(monitor_timeout())
+
                     try:
                         async for event in stream_iter:
+                            # Update last event time for timeout detection
+                            last_event_time = time.time()
+                            if timeout_warning_shown:
+                                # Clear the warning line now that we're receiving data
+                                console.print()  # Finish the warning line
+                                timeout_warning_shown = False
+
                             # Check if we've been interrupted by signal handler
                             if interrupted:
                                 stream_interrupted = True
+                                if active_tool_status:
+                                    active_tool_status.stop()
+                                    active_tool_status = None
                                 break
                             if isinstance(event, str):
+                                # Stop any active tool progress before printing text
+                                if active_tool_status:
+                                    active_tool_status.stop()
+                                    active_tool_status = None
                                 # Regular text chunk - escape Rich markup chars
                                 console.print(rich_escape(event), end="", style="white")
                                 response_chunks.append(event)
-                            elif isinstance(event, ToolCallEvent):
+                            elif isinstance(event, ToolCallStartEvent):
+                                # Tool call starting - show spinner immediately!
+                                # Stop any previous tool progress
+                                if active_tool_status:
+                                    active_tool_status.stop()
+                                    active_tool_status = None
+
                                 # Track this tool call for later result matching
                                 pending_tools[event.tool_id] = event.tool_name
+                                active_tool_name = event.tool_name
+                                logger.debug(f"DEBUG: ToolCallStartEvent received - tool_name={event.tool_name}")
+
+                                # Check if this is a yield_to_human call
+                                if event.tool_name == "mcp__memory__yield_to_human":
+                                    # Don't show spinner for yield_to_human, it will be handled in ToolCallEvent
+                                    pass
+                                else:
+                                    # Start spinner immediately when tool generation begins
+                                    console.print()
+                                    active_tool_status = console.status(
+                                        f"  [cyan]⏳ 🔧 {event.tool_name}...[/cyan]",
+                                        spinner="dots"
+                                    )
+                                    active_tool_status.start()
+
+                            elif isinstance(event, ToolCallEvent):
+                                # Full tool call received - show details
+                                # Stop spinner temporarily to print details
+                                if active_tool_status:
+                                    active_tool_status.stop()
+                                    active_tool_status = None
+
+                                # Track this tool call for later result matching
+                                pending_tools[event.tool_id] = event.tool_name
+                                active_tool_name = event.tool_name
                                 logger.debug(f"DEBUG: ToolCallEvent received - tool_name={event.tool_name}")
+
                                 # Check if this is a yield_to_human call
                                 if event.tool_name == "mcp__memory__yield_to_human":
                                     yielded_to_human = True
@@ -958,7 +1027,6 @@ async def _chat_session(
                                     logger.debug(f"DEBUG: yield_to_human detected, flag set to True")
                                 else:
                                     # Display tool call with collapsible style
-                                    console.print()
                                     console.print(
                                         f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]"
                                     )
@@ -985,7 +1053,19 @@ async def _chat_session(
                                         console.print(
                                             f"    [dim]{rich_escape(tool_input_preview)}[/dim]"
                                         )
+
+                                    # Restart progress indicator for tool execution
+                                    active_tool_status = console.status(
+                                        f"  [cyan]⏳ {event.tool_name} running...[/cyan]",
+                                        spinner="dots"
+                                    )
+                                    active_tool_status.start()
                             elif isinstance(event, ToolResultEvent):
+                                # Stop progress indicator when result arrives
+                                if active_tool_status:
+                                    active_tool_status.stop()
+                                    active_tool_status = None
+
                                 # Get tool name from pending calls
                                 tool_name = pending_tools.get(event.tool_id, "unknown")
                                 # Skip displaying yield_to_human results (already shown)
@@ -1012,7 +1092,18 @@ async def _chat_session(
                     except KeyboardInterrupt:
                         # Direct Ctrl+C during streaming
                         stream_interrupted = True
+                        if active_tool_status:
+                            active_tool_status.stop()
+                            active_tool_status = None
+                        if timeout_monitor_task:
+                            timeout_monitor_task.cancel()
                     except SystemExit as e:
+                        # Stop progress indicator on exit
+                        if active_tool_status:
+                            active_tool_status.stop()
+                            active_tool_status = None
+                        if timeout_monitor_task:
+                            timeout_monitor_task.cancel()
                         # Subprocess exit - check if SIGINT related
                         exit_code = e.code if hasattr(e, "code") else None
                         if exit_code in (-2, 130, 2) or interrupted:
@@ -1020,6 +1111,12 @@ async def _chat_session(
                         else:
                             raise
                     except Exception as stream_error:
+                        # Stop progress indicator on error
+                        if active_tool_status:
+                            active_tool_status.stop()
+                            active_tool_status = None
+                        if timeout_monitor_task:
+                            timeout_monitor_task.cancel()
                         # Check if this was due to Ctrl+C interrupt
                         # Exit codes: -2 (Python internal), 130 (128+2, standard SIGINT)
                         error_str = str(stream_error).lower()
@@ -1037,6 +1134,17 @@ async def _chat_session(
                         else:
                             # Re-raise unexpected errors
                             raise
+
+                    # Ensure progress indicator and timeout monitor are stopped after stream completes
+                    if active_tool_status:
+                        active_tool_status.stop()
+                        active_tool_status = None
+                    if timeout_monitor_task:
+                        timeout_monitor_task.cancel()
+                        try:
+                            await timeout_monitor_task
+                        except asyncio.CancelledError:
+                            pass
 
                     # Add bottom border
                     console.print()

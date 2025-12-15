@@ -6,6 +6,7 @@ from .conversation_manager import HierarchicalConversationManager
 from .claude_agent_sdk_manager import (
     ClaudeAgentSDKConversationManager,
     StreamChunk,
+    ToolCallStartEvent,
     ToolCallEvent,
     ToolResultEvent,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "ClaudeAgentSDKConversationManager",
     "create_conversation_manager",
     "StreamChunk",
+    "ToolCallStartEvent",
     "ToolCallEvent",
     "ToolResultEvent",
 ]

@@ -42,8 +42,15 @@ class StreamChunk:
 
 
 @dataclass
+class ToolCallStartEvent:
+    """Emitted when a tool call starts being generated (before full input is ready)."""
+    tool_id: str
+    tool_name: str
+
+
+@dataclass
 class ToolCallEvent:
-    """A tool call event."""
+    """A tool call event (emitted when full tool input is ready)."""
     tool_id: str
     tool_name: str
     tool_input: Dict[str, Any]
@@ -74,6 +81,13 @@ class ClaudeAgentSDKConversationManager:
 
     The hierarchical memory system compresses older conversation nodes to enable
     effectively infinite conversations within context limits.
+
+    Key Features:
+        - Seamless integration with Claude Pro/Max subscriptions
+        - Automatic context compression for long conversations
+        - Multi-level memory hierarchy (FULL -> SUMMARY -> META -> ARCHIVE)
+        - MCP tool support for memory operations
+        - Streaming responses with tool call events
     """
 
     def __init__(
@@ -405,12 +419,30 @@ class ClaudeAgentSDKConversationManager:
         # Collect full response while streaming
         full_response = ""
 
+        # Track tool calls that we've already sent start events for
+        started_tool_ids = set()
+
         try:
             async for message in query(prompt=user_message, options=options):
                 # Handle streaming events (partial messages)
                 if isinstance(message, StreamEvent):
                     event = message.event
-                    if event.get("type") == "content_block_delta":
+                    event_type = event.get("type")
+
+                    # Detect content_block_start for tool_use - this is when tool call begins
+                    if event_type == "content_block_start" and include_tool_events:
+                        content_block = event.get("content_block", {})
+                        if content_block.get("type") == "tool_use":
+                            tool_id = content_block.get("id", "")
+                            tool_name = content_block.get("name", "")
+                            if tool_id and tool_name and tool_id not in started_tool_ids:
+                                started_tool_ids.add(tool_id)
+                                yield ToolCallStartEvent(
+                                    tool_id=tool_id,
+                                    tool_name=tool_name,
+                                )
+
+                    elif event_type == "content_block_delta":
                         delta = event.get("delta", {})
                         if delta.get("type") == "text_delta":
                             chunk = delta.get("text", "")
