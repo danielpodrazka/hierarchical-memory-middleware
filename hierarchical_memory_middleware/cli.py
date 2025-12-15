@@ -811,6 +811,9 @@ async def _chat_session(
         console.print(
             "   [yellow]/remove_node <node_id>[/yellow] - Remove a node (with confirmation)"
         )
+        console.print(
+            "   [yellow]/rename <name>[/yellow]        - Rename current conversation"
+        )
         console.print("   [yellow]/help[/yellow]                - Show this help")
         console.print(
             "   [yellow]/quit[/yellow] or [yellow]/exit[/yellow]        - Exit chat"
@@ -978,7 +981,10 @@ async def _chat_session(
                                 console.print(rich_escape(event), end="", style="white")
                                 response_chunks.append(event)
                             elif isinstance(event, ToolCallStartEvent):
-                                # Tool call starting - show spinner immediately!
+                                # Tool call starting - show static message (no spinner yet)
+                                # The spinner will start when ToolCallEvent arrives with full details
+                                # This avoids rapid spinner start/stop flickering
+
                                 # Stop any previous tool progress
                                 if active_tool_status:
                                     active_tool_status.stop()
@@ -991,20 +997,20 @@ async def _chat_session(
 
                                 # Check if this is a yield_to_human call
                                 if event.tool_name == "mcp__memory__yield_to_human":
-                                    # Don't show spinner for yield_to_human, it will be handled in ToolCallEvent
+                                    # Don't show anything for yield_to_human, it will be handled in ToolCallEvent
                                     pass
                                 else:
-                                    # Start spinner immediately when tool generation begins
+                                    # Show static "preparing" message instead of spinner
+                                    # This avoids flicker from rapid spinner start/stop
                                     console.print()
-                                    active_tool_status = console.status(
+                                    console.print(
                                         f"  [cyan]⏳ 🔧 {event.tool_name}...[/cyan]",
-                                        spinner="dots"
+                                        end=""
                                     )
-                                    active_tool_status.start()
 
                             elif isinstance(event, ToolCallEvent):
                                 # Full tool call received - show details
-                                # Stop spinner temporarily to print details
+                                # Stop any active spinner
                                 if active_tool_status:
                                     active_tool_status.stop()
                                     active_tool_status = None
@@ -1020,13 +1026,14 @@ async def _chat_session(
                                     reason = event.tool_input.get(
                                         "reason", "Task complete"
                                     )
-                                    console.print()
+                                    console.print()  # Clear the "preparing" line
                                     console.print(
                                         f"  [bold yellow]⏸️  Yielding to human: {rich_escape(reason)}[/bold yellow]"
                                     )
                                     logger.debug(f"DEBUG: yield_to_human detected, flag set to True")
                                 else:
-                                    # Display tool call with collapsible style
+                                    # Clear the "preparing" line and display tool call with details
+                                    console.print()  # Finish the "preparing" line
                                     console.print(
                                         f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]"
                                     )
@@ -1054,10 +1061,12 @@ async def _chat_session(
                                             f"    [dim]{rich_escape(tool_input_preview)}[/dim]"
                                         )
 
-                                    # Restart progress indicator for tool execution
+                                    # Start progress indicator for tool execution
+                                    # Use lower refresh rate to reduce flickering
                                     active_tool_status = console.status(
                                         f"  [cyan]⏳ {event.tool_name} running...[/cyan]",
-                                        spinner="dots"
+                                        spinner="dots",
+                                        refresh_per_second=4  # Lower refresh rate reduces flicker
                                     )
                                     active_tool_status.start()
                             elif isinstance(event, ToolResultEvent):
