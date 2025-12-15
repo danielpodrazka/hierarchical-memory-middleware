@@ -30,7 +30,7 @@ from ..config import Config
 from ..storage import DuckDBStorage
 from ..compression import TfidfCompressor, CompressionManager
 from ..advanced_hierarchy import AdvancedCompressionManager
-from ..models import CompressionLevel, NodeType, HierarchyThresholds
+from ..models import CompressionLevel, NodeType, HierarchyThresholds, ConversationNode
 from ..model_manager import ModelManager
 
 
@@ -1193,8 +1193,14 @@ class HierarchicalConversationManager:
             logger.exception(f"Error in chat: {str(e)}", exc_info=True)
             return f"I apologize, but I encountered an error processing your message: {str(e)}"
 
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text (roughly 4 chars per token for Claude models)."""
+        if not text:
+            return 0
+        return len(text) // 4
+
     async def get_conversation_summary(self) -> Dict[str, Any]:
-        """Get a summary of the current conversation state."""
+        """Get a summary of the current conversation state with token statistics."""
         if not self.conversation_id:
             return {"error": "No active conversation"}
 
@@ -1202,16 +1208,62 @@ class HierarchicalConversationManager:
             stats = await self.storage.get_conversation_stats(self.conversation_id)
             nodes = await self.storage.get_conversation_nodes(self.conversation_id)
 
+            # Group nodes by compression level
+            nodes_by_level = {
+                CompressionLevel.FULL: [],
+                CompressionLevel.SUMMARY: [],
+                CompressionLevel.META: [],
+                CompressionLevel.ARCHIVE: [],
+            }
+            for n in nodes:
+                nodes_by_level[n.level].append(n)
+
+            # Calculate token counts for each level
+            def get_context_text(node: ConversationNode) -> str:
+                """Get the text that would actually be used in context for this node."""
+                if node.level == CompressionLevel.FULL:
+                    return node.content
+                elif node.summary:
+                    return node.summary
+                else:
+                    return node.content
+
+            def get_original_text(node: ConversationNode) -> str:
+                """Get the original full content of the node."""
+                return node.content
+
+            token_stats = {}
+            total_current_tokens = 0
+            total_original_tokens = 0
+
+            for level, level_nodes in nodes_by_level.items():
+                level_name = level.name.lower()
+                current_tokens = sum(self._estimate_tokens(get_context_text(n)) for n in level_nodes)
+                original_tokens = sum(self._estimate_tokens(get_original_text(n)) for n in level_nodes)
+
+                token_stats[level_name] = {
+                    "count": len(level_nodes),
+                    "current_tokens": current_tokens,
+                    "original_tokens": original_tokens,
+                    "compression_ratio": round(original_tokens / current_tokens, 2) if current_tokens > 0 else 0,
+                }
+                total_current_tokens += current_tokens
+                total_original_tokens += original_tokens
+
             return {
                 "conversation_id": self.conversation_id,
                 "total_nodes": len(nodes),
-                "recent_nodes": len(
-                    [n for n in nodes if n.level == CompressionLevel.FULL]
-                ),
-                "compressed_nodes": len(
-                    [n for n in nodes if n.level == CompressionLevel.SUMMARY]
-                ),
+                "recent_nodes": len(nodes_by_level[CompressionLevel.FULL]),
+                "compressed_nodes": len(nodes_by_level[CompressionLevel.SUMMARY]),
                 "compression_stats": stats.compression_stats if stats else {},
+                "token_stats": {
+                    "by_level": token_stats,
+                    "total_current_tokens": total_current_tokens,
+                    "total_original_tokens": total_original_tokens,
+                    "overall_compression_ratio": round(total_original_tokens / total_current_tokens, 2) if total_current_tokens > 0 else 0,
+                    "tokens_saved": total_original_tokens - total_current_tokens,
+                    "tokens_saved_percent": round((1 - total_current_tokens / total_original_tokens) * 100, 1) if total_original_tokens > 0 else 0,
+                },
                 "last_updated": stats.last_updated.isoformat()
                 if stats and stats.last_updated
                 else None,

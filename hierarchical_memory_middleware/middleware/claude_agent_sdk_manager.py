@@ -694,25 +694,82 @@ If you don't call yield_to_human, the system will automatically prompt you to co
 
             logger.debug(f"Compressed node {node.node_id} to SUMMARY level")
 
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text (roughly 4 chars per token for Claude models)."""
+        if not text:
+            return 0
+        return len(text) // 4
+
     async def get_conversation_stats(self) -> Dict[str, Any]:
         """Get statistics about the current conversation.
 
         Returns:
-            Dictionary with conversation statistics
+            Dictionary with conversation statistics including token counts
         """
         if not self.conversation_id:
             return {}
 
         nodes = await self.storage.get_conversation_nodes(self.conversation_id)
 
+        # Group nodes by compression level
+        nodes_by_level = {
+            CompressionLevel.FULL: [],
+            CompressionLevel.SUMMARY: [],
+            CompressionLevel.META: [],
+            CompressionLevel.ARCHIVE: [],
+        }
+        for n in nodes:
+            nodes_by_level[n.level].append(n)
+
+        # Calculate token counts for each level
+        # For compressed nodes, we count what's actually used in context (summary/content)
+        def get_context_text(node: ConversationNode) -> str:
+            """Get the text that would actually be used in context for this node."""
+            if node.level == CompressionLevel.FULL:
+                return node.content
+            elif node.summary:
+                return node.summary
+            else:
+                return node.content
+
+        def get_original_text(node: ConversationNode) -> str:
+            """Get the original full content of the node."""
+            return node.content
+
+        token_stats = {}
+        total_current_tokens = 0
+        total_original_tokens = 0
+
+        for level, level_nodes in nodes_by_level.items():
+            level_name = level.name.lower()
+            current_tokens = sum(self._estimate_tokens(get_context_text(n)) for n in level_nodes)
+            original_tokens = sum(self._estimate_tokens(get_original_text(n)) for n in level_nodes)
+
+            token_stats[level_name] = {
+                "count": len(level_nodes),
+                "current_tokens": current_tokens,
+                "original_tokens": original_tokens,
+                "compression_ratio": round(original_tokens / current_tokens, 2) if current_tokens > 0 else 0,
+            }
+            total_current_tokens += current_tokens
+            total_original_tokens += original_tokens
+
         stats = {
             "conversation_id": self.conversation_id,
             "total_nodes": len(nodes),
             "compression_levels": {
-                "full": len([n for n in nodes if n.level == CompressionLevel.FULL]),
-                "summary": len([n for n in nodes if n.level == CompressionLevel.SUMMARY]),
-                "meta": len([n for n in nodes if n.level == CompressionLevel.META]),
-                "archive": len([n for n in nodes if n.level == CompressionLevel.ARCHIVE]),
+                "full": len(nodes_by_level[CompressionLevel.FULL]),
+                "summary": len(nodes_by_level[CompressionLevel.SUMMARY]),
+                "meta": len(nodes_by_level[CompressionLevel.META]),
+                "archive": len(nodes_by_level[CompressionLevel.ARCHIVE]),
+            },
+            "token_stats": {
+                "by_level": token_stats,
+                "total_current_tokens": total_current_tokens,
+                "total_original_tokens": total_original_tokens,
+                "overall_compression_ratio": round(total_original_tokens / total_current_tokens, 2) if total_current_tokens > 0 else 0,
+                "tokens_saved": total_original_tokens - total_current_tokens,
+                "tokens_saved_percent": round((1 - total_current_tokens / total_original_tokens) * 100, 1) if total_original_tokens > 0 else 0,
             },
             "user_messages": len([n for n in nodes if n.node_type == NodeType.USER]),
             "ai_messages": len([n for n in nodes if n.node_type == NodeType.AI]),

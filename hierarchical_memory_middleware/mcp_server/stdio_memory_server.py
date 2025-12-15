@@ -142,6 +142,12 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             logger.error(f"Error searching memory: {e}")
             return {"error": str(e)}
 
+    def _estimate_tokens(text: str) -> int:
+        """Estimate token count for text (roughly 4 chars per token for Claude models)."""
+        if not text:
+            return 0
+        return len(text) // 4
+
     @mcp.tool()
     async def get_memory_stats() -> Dict[str, Any]:
         """Get statistics about the conversation memory.
@@ -150,17 +156,48 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
         and how it's organized across compression levels.
 
         Returns:
-            Statistics including message counts and compression distribution
+            Statistics including message counts, compression distribution, and token counts
         """
         try:
             nodes = await storage.get_conversation_nodes(conversation_id)
 
-            # Count by compression level
+            # Group nodes by compression level
+            nodes_by_level = {level: [] for level in CompressionLevel}
+            for n in nodes:
+                nodes_by_level[n.level].append(n)
+
+            # Calculate token stats for each level
+            def get_context_text(node):
+                """Get the text that would actually be used in context."""
+                if node.level == CompressionLevel.FULL:
+                    return node.content
+                elif node.summary:
+                    return node.summary
+                else:
+                    return node.content
+
             level_counts = {}
+            token_stats_by_level = {}
+            total_current_tokens = 0
+            total_original_tokens = 0
+
             for level in CompressionLevel:
-                count = len([n for n in nodes if n.level == level])
+                level_nodes = nodes_by_level[level]
+                count = len(level_nodes)
                 if count > 0:
                     level_counts[level.name] = count
+
+                    current_tokens = sum(_estimate_tokens(get_context_text(n)) for n in level_nodes)
+                    original_tokens = sum(_estimate_tokens(n.content) for n in level_nodes)
+
+                    token_stats_by_level[level.name] = {
+                        "count": count,
+                        "current_tokens": current_tokens,
+                        "original_tokens": original_tokens,
+                        "compression_ratio": round(original_tokens / current_tokens, 2) if current_tokens > 0 else 0,
+                    }
+                    total_current_tokens += current_tokens
+                    total_original_tokens += original_tokens
 
             # Count by type
             user_count = len([n for n in nodes if n.node_type == NodeType.USER])
@@ -173,6 +210,14 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
                 "user_messages": user_count,
                 "ai_messages": ai_count,
                 "compression_levels": level_counts,
+                "token_stats": {
+                    "by_level": token_stats_by_level,
+                    "total_current_tokens": total_current_tokens,
+                    "total_original_tokens": total_original_tokens,
+                    "overall_compression_ratio": round(total_original_tokens / total_current_tokens, 2) if total_current_tokens > 0 else 0,
+                    "tokens_saved": total_original_tokens - total_current_tokens,
+                    "tokens_saved_percent": round((1 - total_current_tokens / total_original_tokens) * 100, 1) if total_original_tokens > 0 else 0,
+                },
             }
         except Exception as e:
             logger.error(f"Error getting memory stats: {e}")

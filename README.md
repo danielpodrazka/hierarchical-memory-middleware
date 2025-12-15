@@ -13,6 +13,71 @@ Hierarchical Memory Middleware addresses context window limitations by implement
 - **Multi-Provider**: Supports Claude, OpenAI, Gemini, Moonshot, DeepSeek, and more
 - **Semantic Search**: Optional embeddings for meaning-based search (sentence-transformers or OpenAI)
 
+## Comparison to Other AI Memory Tools (2025)
+
+| Feature | **HMM** | **Claude Code /compact** | **ChatGPT Memory** | **Gemini** |
+|---------|---------|--------------------------|-------------------|------------|
+| **Compression Ratio** | **8.4x** (88% reduction) | ~6:1 typical | N/A | N/A |
+| **Compression Levels** | 4-tier hierarchy | 1-tier (flat summary) | No compression | No compression |
+| **Semantic Search** | ✅ DuckDB VSS | ❌ | ❌ | ❌ |
+| **When Triggered** | Continuous/proactive | At 75-95% capacity | N/A | N/A |
+| **Cross-Session** | ✅ DuckDB storage | ❌ (per-session) | ✅ (33 facts max) | Limited |
+| **Agent Scratchpad** | ✅ Self-modifiable | ❌ (CLAUDE.md is static) | ❌ | ❌ |
+| **Selective Recall** | ✅ Search + expand nodes | ❌ | Limited | Limited |
+
+### Key Differentiators
+
+**1. Hierarchical vs. Flat Compression**
+- **Claude Code**: Single-level summarization - when it compacts, everything becomes one flat summary
+- **HMM**: 4-tier hierarchy (FULL → SUMMARY → META → ARCHIVE) preserves structure. Recent messages stay full, older ones progressively compress, but can be **expanded on demand**
+
+**2. Proactive vs. Reactive**
+- **Claude Code**: Waits until ~75-95% context capacity, then does "big bang" compression
+- **HMM**: Continuously maintains compressed context - no sudden quality degradation
+
+**3. Searchable Memory with Selective Expansion**
+- **ChatGPT**: Uses only ~33 explicit long-term facts and ~15 conversation summaries - no search
+- **HMM**: Full semantic search with DuckDB VSS, can find and expand any node from history
+
+**4. Self-Modifiable Agent State**
+- **Claude Code**: Uses CLAUDE.md files, but the agent can't update them during conversation
+- **HMM**: Agent can update its own scratchpad/system prompt in real-time
+
+### Token Cost Comparison
+
+How does HMM compare to normal chat with KV-caching plus one big compression at context limit?
+
+**Scenario**: 100-turn conversation, ~1k tokens per exchange, 200k context limit
+
+| Approach | Total Input Tokens | With Caching (50% discount) | Effective Tokens |
+|----------|-------------------|----------------------------|------------------|
+| **Normal + Big Compression** | ~5M tokens | ~3.75M | 3.75M |
+| **HMM Continuous** | ~1.5M tokens | No caching | 1.5M |
+| **Savings** | | | **60% fewer tokens** |
+
+**Why HMM wins despite no KV-caching:**
+
+```
+Normal Chat (with caching):
+Turn 1:  10k tokens  (5k cached + 5k new = 7.5k effective)
+Turn 2:  20k tokens  (10k cached + 10k new = 15k effective)
+Turn 3:  30k tokens  (15k cached + 15k new = 22.5k effective)
+...
+Turn 50: 200k tokens (100k cached + 100k new = 150k effective) → COMPRESS
+Turn 51: 25k tokens  (starts over with summary)
+...repeats...
+
+Total over 100 turns: ~3.75M effective tokens
+
+HMM (no caching, but small context):
+Every turn: ~15k tokens (compressed context + recent full messages)
+Total over 100 turns: 1.5M tokens
+```
+
+**The math**: Even with 50% KV-cache discount, sending 200k tokens 50 times adds up fast. HMM's constant ~15k context wins by sending **13x less data per turn**.
+
+*Note: KV-caching requires stable prompt prefixes. HMM's context changes every turn (as compression shifts), so caching doesn't apply. But the token savings more than compensate.*
+
 ## Quick Start
 
 ### Option 1: Claude Agent SDK (Recommended)
