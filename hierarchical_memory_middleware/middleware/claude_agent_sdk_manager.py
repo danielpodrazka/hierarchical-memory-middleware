@@ -287,33 +287,82 @@ class ClaudeAgentSDKConversationManager:
         meta_nodes = [n for n in nodes if n.level == CompressionLevel.META]
         archive_nodes = [n for n in nodes if n.level == CompressionLevel.ARCHIVE]
 
-        # Add archive context (highest level summary)
+        # Calculate which nodes are close to compression
+        # FULL nodes that will be compressed next (oldest ones above threshold)
+        full_nodes_to_compress_count = max(0, len(full_nodes) - self.hierarchy_thresholds.summary_threshold)
+        # SUMMARY nodes that will be grouped into META next
+        summary_nodes_to_compress_count = max(0, len(summary_nodes) - self.hierarchy_thresholds.meta_threshold)
+        # META nodes that will be archived next
+        meta_nodes_to_archive_count = max(0, len(meta_nodes) - self.hierarchy_thresholds.archive_threshold)
+
+        # Add archive context (highest level summary) - aggregated into batches
         if archive_nodes:
             context_parts.append("=== ARCHIVED CONTEXT ===")
-            for node in archive_nodes:
-                context_parts.append(f"[Archive] {node.summary or node.content[:200]}")
+            # Group archives into batches of ~20 to reduce token count
+            batch_size = 20
+            for i in range(0, len(archive_nodes), batch_size):
+                batch = archive_nodes[i:i + batch_size]
+                if not batch:
+                    continue
+
+                # Get node range
+                first_node = batch[0]
+                last_node = batch[-1]
+
+                # Collect all topics from the batch
+                all_topics = []
+                total_lines = 0
+                for node in batch:
+                    if node.topics:
+                        all_topics.extend(node.topics)
+                    total_lines += node.line_count or 1
+
+                # Get top 5 most common topics
+                topic_counts = {}
+                for topic in all_topics:
+                    topic_counts[topic] = topic_counts.get(topic, 0) + 1
+                top_topics = sorted(topic_counts.keys(), key=lambda t: topic_counts[t], reverse=True)[:5]
+                topics_str = ", ".join(top_topics) if top_topics else "general"
+
+                # Create compact batch summary
+                context_parts.append(
+                    f"Nodes {first_node.node_id}-{last_node.node_id}:"
+                    f"({len(batch)} nodes, {total_lines} lines) [Topics: {topics_str}]"
+                )
 
         # Add meta-level summaries
         if meta_nodes:
             context_parts.append("\n=== META SUMMARIES ===")
-            for node in meta_nodes:
+            for i, node in enumerate(meta_nodes):
                 topics = ", ".join(node.topics) if node.topics else "general"
-                context_parts.append(f"[Meta: {topics}] {node.summary or node.content[:300]}")
+                # Add hint for nodes that will be archived next
+                hint = " ⚠️ (will be archived next)" if i < meta_nodes_to_archive_count else ""
+                context_parts.append(f"[Meta: {topics}] {node.summary or node.content[:300]}{hint}")
 
         # Add summary-level nodes
         if summary_nodes:
             context_parts.append("\n=== CONVERSATION SUMMARIES ===")
-            for node in summary_nodes[-10:]:  # Last 10 summaries
+            displayed_summaries = summary_nodes[-10:]  # Last 10 summaries
+            # Calculate which of the displayed summaries are close to META compression
+            # The oldest summaries (first in the full list) are compressed first
+            for node in displayed_summaries:
                 role = "User" if node.node_type == NodeType.USER else "Assistant"
                 content = node.summary or node.content[:200]
-                context_parts.append(f"[{role}] {content}")
+                # Check if this node is among those to be compressed
+                node_index = summary_nodes.index(node)
+                hint = " ⚠️ (will be grouped into META next)" if node_index < summary_nodes_to_compress_count else ""
+                context_parts.append(f"[{role}] ID {node.node_id}: {content}{hint}")
 
         # Add full recent nodes
         if full_nodes:
             context_parts.append("\n=== RECENT CONVERSATION ===")
-            for node in full_nodes[-self.config.recent_node_limit :]:
+            displayed_full = full_nodes[-self.config.recent_node_limit:]
+            for node in displayed_full:
                 role = "User" if node.node_type == NodeType.USER else "Assistant"
-                context_parts.append(f"[{role}] {node.content}")
+                # Check if this node is among those to be compressed to SUMMARY
+                node_index = full_nodes.index(node)
+                hint = " ⚠️ (will be summarized next)" if node_index < full_nodes_to_compress_count else ""
+                context_parts.append(f"[{role}] {node.content}{hint}")
 
         return "\n".join(context_parts)
 
