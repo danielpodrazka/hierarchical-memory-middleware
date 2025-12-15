@@ -10,8 +10,20 @@ Usage:
 """
 
 import argparse
+import http.server
+import json
 import logging
+import os
+import shutil
+import signal
+import socket
+import socketserver
+import subprocess
 import sys
+import threading
+import time
+import urllib.request
+from pathlib import Path
 from typing import Dict, Any
 
 from fastmcp import FastMCP
@@ -392,6 +404,349 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             "reason": reason,
             "message": f"Yielding to human: {reason}",
         }
+
+    # Track active ngrok deployments for cleanup (stores PIDs for background processes)
+    _active_deployments: Dict[str, Dict[str, Any]] = {}
+
+    # Deployment state file for persistence across restarts
+    _deployment_state_file = Path("/tmp/hmm_deployments.json")
+
+    @mcp.tool()
+    async def deploy_html(file_path: str) -> Dict[str, Any]:
+        """Deploy an HTML file to a public URL using ngrok.
+
+        Use this tool to make a local HTML file accessible via the internet.
+        This is useful for:
+        - Sharing reports with others who don't have local access
+        - Testing web content from external devices
+        - Creating shareable links for research deliverables
+
+        The deployment runs as a background process and will remain active
+        until stop_deployment is called or the system is restarted.
+
+        If the same file is already deployed, returns the existing URL.
+
+        Args:
+            file_path: Absolute path to the HTML file to deploy
+
+        Returns:
+            Public URL where the file is accessible
+        """
+        try:
+            # Validate file exists
+            path = Path(file_path)
+            if not path.exists():
+                return {"error": f"File not found: {file_path}"}
+            if not path.is_file():
+                return {"error": f"Path is not a file: {file_path}"}
+
+            # Check if this file is already deployed
+            # Load persisted deployments
+            persisted = {}
+            if _deployment_state_file.exists():
+                try:
+                    persisted = json.loads(_deployment_state_file.read_text())
+                except:
+                    pass
+
+            # Check all deployments for this file
+            all_deployments = {**persisted, **_active_deployments}
+            for dep_id, dep in all_deployments.items():
+                if dep.get("file_path") == str(path):
+                    # Check if the processes are still running
+                    server_alive = False
+                    ngrok_alive = False
+
+                    if "server_pid" in dep:
+                        try:
+                            os.kill(dep["server_pid"], 0)  # Signal 0 just checks if process exists
+                            server_alive = True
+                        except ProcessLookupError:
+                            pass
+
+                    if "ngrok_pid" in dep:
+                        try:
+                            os.kill(dep["ngrok_pid"], 0)
+                            ngrok_alive = True
+                        except ProcessLookupError:
+                            pass
+
+                    if server_alive and ngrok_alive:
+                        # Deployment still active, return existing URL
+                        return {
+                            "success": True,
+                            "public_url": dep["public_url"],
+                            "file_path": str(path),
+                            "deployment_id": dep_id,
+                            "local_port": dep.get("port"),
+                            "message": f"Already deployed! Existing URL: {dep['public_url']}",
+                            "reused": True,
+                        }
+                    else:
+                        # Clean up dead deployment entry
+                        _active_deployments.pop(dep_id, None)
+                        persisted.pop(dep_id, None)
+                        # Update persisted state
+                        try:
+                            if persisted:
+                                _deployment_state_file.write_text(json.dumps(persisted, indent=2))
+                            elif _deployment_state_file.exists():
+                                _deployment_state_file.unlink()
+                        except:
+                            pass
+
+            # Find ngrok
+            ngrok_path = shutil.which("ngrok") or os.path.expanduser("~/.local/bin/ngrok")
+            if not os.path.exists(ngrok_path):
+                return {"error": "ngrok not found. Install it with: curl -sSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz | tar -xz -C ~/.local/bin/"}
+
+            # Kill any existing ngrok processes (free tier only allows one)
+            # This prevents stale tunnels from interfering with new deployments
+            try:
+                result = subprocess.run(
+                    ["pkill", "-f", "ngrok http"],
+                    capture_output=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    time.sleep(1)  # Give ngrok time to clean up
+                    logger.debug("Killed existing ngrok process")
+            except Exception as e:
+                logger.debug(f"No existing ngrok to kill: {e}")
+
+            # Find an available port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', 0))
+                port = s.getsockname()[1]
+
+            serve_dir = str(path.parent)
+            serve_file = path.name
+
+            # Create a standalone server script that runs independently
+            server_script = f'''#!/usr/bin/env python3
+import http.server
+import socketserver
+import os
+import signal
+import sys
+
+os.chdir({repr(serve_dir)})
+
+class SingleFileHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory={repr(serve_dir)}, **kwargs)
+
+    def log_message(self, format, *args):
+        pass  # Suppress logging
+
+    def do_GET(self):
+        if self.path == "/" or self.path == "/{serve_file}":
+            self.path = "/{serve_file}"
+        super().do_GET()
+
+# Handle termination gracefully
+def signal_handler(sig, frame):
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
+with socketserver.TCPServer(("", {port}), SingleFileHandler) as httpd:
+    httpd.serve_forever()
+'''
+
+            # Write the server script to a temp file
+            script_path = Path(f"/tmp/hmm_server_{port}.py")
+            script_path.write_text(server_script)
+            script_path.chmod(0o755)
+
+            # Start HTTP server as a completely independent background process
+            # Using start_new_session=True to detach from parent process group
+            server_process = subprocess.Popen(
+                [sys.executable, str(script_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+            # Give the server a moment to start
+            time.sleep(0.5)
+
+            # Start ngrok tunnel as independent background process
+            # We use DEVNULL for stdout because reading from pipe can block/hang
+            ngrok_process = subprocess.Popen(
+                [ngrok_path, "http", str(port)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+            # Wait for ngrok to establish tunnel and get URL via API
+            # This is more reliable than parsing log output
+            public_url = None
+            start_time = time.time()
+            timeout = 15  # seconds
+
+            while time.time() - start_time < timeout:
+                time.sleep(1)  # Give ngrok time to start
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=5) as resp:
+                        data = json.loads(resp.read().decode())
+                        for tunnel in data.get("tunnels", []):
+                            if tunnel.get("public_url", "").startswith("https://"):
+                                public_url = tunnel["public_url"]
+                                break
+                    if public_url:
+                        break
+                except Exception as e:
+                    # ngrok API not ready yet, keep trying
+                    logger.debug(f"Waiting for ngrok API: {e}")
+                    continue
+
+            if not public_url:
+                # Clean up on failure
+                try:
+                    os.kill(ngrok_process.pid, signal.SIGTERM)
+                    ngrok_process.wait(timeout=5)  # Reap zombie
+                except:
+                    pass
+                try:
+                    os.kill(server_process.pid, signal.SIGTERM)
+                    server_process.wait(timeout=5)  # Reap zombie
+                except:
+                    pass
+                return {"error": "Failed to establish ngrok tunnel. Make sure ngrok is authenticated: ngrok config add-authtoken YOUR_TOKEN"}
+
+            # Store deployment info (PIDs for cleanup)
+            deployment_id = f"deploy_{port}"
+            deployment_info = {
+                "port": port,
+                "file_path": str(path),
+                "public_url": public_url,
+                "server_pid": server_process.pid,
+                "ngrok_pid": ngrok_process.pid,
+                "script_path": str(script_path),
+            }
+            _active_deployments[deployment_id] = deployment_info
+
+            # Persist to file for recovery across restarts
+            try:
+                existing = {}
+                if _deployment_state_file.exists():
+                    existing = json.loads(_deployment_state_file.read_text())
+                existing[deployment_id] = deployment_info
+                _deployment_state_file.write_text(json.dumps(existing, indent=2))
+            except Exception as e:
+                logger.warning(f"Could not persist deployment state: {e}")
+
+            return {
+                "success": True,
+                "public_url": public_url,
+                "file_path": str(path),
+                "deployment_id": deployment_id,
+                "local_port": port,
+                "message": f"Deployed! Public URL: {public_url}",
+            }
+        except Exception as e:
+            logger.error(f"Error deploying HTML: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def stop_deployment(deployment_id: str = None) -> Dict[str, Any]:
+        """Stop an active HTML deployment.
+
+        Use this to clean up ngrok tunnels when you're done sharing.
+        If no deployment_id is provided, stops all active deployments.
+
+        Args:
+            deployment_id: The deployment ID returned by deploy_html (optional)
+
+        Returns:
+            Status of the stopped deployment(s)
+        """
+        try:
+            stopped = []
+
+            # Load persisted deployments
+            persisted = {}
+            if _deployment_state_file.exists():
+                try:
+                    persisted = json.loads(_deployment_state_file.read_text())
+                except:
+                    pass
+
+            # Merge with in-memory deployments
+            all_deployments = {**persisted, **_active_deployments}
+
+            def stop_one(dep_id: str, dep: Dict) -> bool:
+                """Stop a single deployment. Returns True if stopped."""
+                try:
+                    # Kill ngrok process
+                    if "ngrok_pid" in dep:
+                        try:
+                            os.kill(dep["ngrok_pid"], signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass  # Already dead
+                    elif "ngrok_process" in dep:
+                        dep["ngrok_process"].terminate()
+
+                    # Kill server process
+                    if "server_pid" in dep:
+                        try:
+                            os.kill(dep["server_pid"], signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass  # Already dead
+                    elif "httpd" in dep:
+                        dep["httpd"].shutdown()
+
+                    # Clean up script file
+                    if "script_path" in dep:
+                        try:
+                            Path(dep["script_path"]).unlink(missing_ok=True)
+                        except:
+                            pass
+
+                    return True
+                except Exception as e:
+                    logger.warning(f"Error stopping deployment {dep_id}: {e}")
+                    return False
+
+            if deployment_id:
+                # Stop specific deployment
+                if deployment_id in all_deployments:
+                    if stop_one(deployment_id, all_deployments[deployment_id]):
+                        stopped.append(deployment_id)
+                    _active_deployments.pop(deployment_id, None)
+                    persisted.pop(deployment_id, None)
+                else:
+                    return {"error": f"Deployment not found: {deployment_id}"}
+            else:
+                # Stop all deployments
+                for dep_id, dep in list(all_deployments.items()):
+                    if stop_one(dep_id, dep):
+                        stopped.append(dep_id)
+                _active_deployments.clear()
+                persisted.clear()
+
+            # Update persisted state
+            try:
+                if persisted:
+                    _deployment_state_file.write_text(json.dumps(persisted, indent=2))
+                elif _deployment_state_file.exists():
+                    _deployment_state_file.unlink()
+            except:
+                pass
+
+            return {
+                "success": True,
+                "stopped": stopped,
+                "message": f"Stopped {len(stopped)} deployment(s)",
+            }
+        except Exception as e:
+            logger.error(f"Error stopping deployment: {e}")
+            return {"error": str(e)}
 
     return mcp
 
