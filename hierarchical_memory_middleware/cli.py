@@ -43,7 +43,7 @@ app = typer.Typer(
 )
 console = Console()
 
-# Directory for storing large pasted content (temporary files)
+# Directory for storing large pasted content (temp files for multiline input)
 PASTE_STORAGE_DIR = Path(tempfile.gettempdir()) / "hmm_paste_storage"
 
 # Thresholds for large paste handling
@@ -54,19 +54,20 @@ LARGE_PASTE_LINES_THRESHOLD = 8  # lines
 def format_edit_diff(old_string: str, new_string: str, file_path: str, max_lines: int = 10) -> str:
     """Format an Edit tool call as a diff-style display.
 
-    Shows old text with red background and new text with green background,
-    similar to GitHub's diff view.
+    Shows full old/new lines with word-level highlighting, inspired by GitHub's
+    split diff view. Full lines are displayed with -/+ prefixes, but only the
+    specific changed words get highlighted with colored backgrounds.
 
     Args:
         old_string: The text being replaced
         new_string: The replacement text
         file_path: The file being edited
-        max_lines: Maximum lines to show for each section
+        max_lines: Maximum lines to show
 
     Returns:
         Formatted string for Rich console
     """
-    from rich.text import Text
+    import difflib
 
     def truncate_lines(text: str, max_lines: int) -> tuple[str, int]:
         """Truncate text to max_lines, return (truncated_text, remaining_count)."""
@@ -75,29 +76,86 @@ def format_edit_diff(old_string: str, new_string: str, file_path: str, max_lines
             return text, 0
         return '\n'.join(lines[:max_lines]), len(lines) - max_lines
 
-    # Truncate if needed
-    old_truncated, old_remaining = truncate_lines(old_string, max_lines)
-    new_truncated, new_remaining = truncate_lines(new_string, max_lines)
-
     # Build the output
     output_parts = []
     output_parts.append(f"    [dim]📁 {file_path}[/dim]")
 
-    # Show old string with muted red background (GitHub-style diff)
-    if old_string:
-        for line in old_truncated.split('\n'):
-            escaped_line = rich_escape(line) if line else " "
-            output_parts.append(f"    [white on dark_red]- {escaped_line}[/white on dark_red]")
-        if old_remaining > 0:
-            output_parts.append(f"    [dim]  ... ({old_remaining} more lines)[/dim]")
+    # Get line-by-line diff
+    old_lines = old_string.split('\n')
+    new_lines = new_string.split('\n')
 
-    # Show new string with muted green background
-    if new_string:
-        for line in new_truncated.split('\n'):
-            escaped_line = rich_escape(line) if line else " "
-            output_parts.append(f"    [white on dark_green]+ {escaped_line}[/white on dark_green]")
-        if new_remaining > 0:
-            output_parts.append(f"    [dim]  ... ({new_remaining} more lines)[/dim]")
+    # Truncate if needed
+    total_lines = max(len(old_lines), len(new_lines))
+    truncated = total_lines > max_lines
+    if truncated:
+        old_lines = old_lines[:max_lines]
+        new_lines = new_lines[:max_lines]
+
+    # Use SequenceMatcher for line-level diff
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            # Unchanged lines - show dimmed
+            for line in old_lines[i1:i2]:
+                escaped = rich_escape(line) if line else " "
+                output_parts.append(f"    [dim]  {escaped}[/dim]")
+        elif tag == 'replace':
+            # Changed lines - show full old/new lines but highlight only changed words
+            for old_line, new_line in zip(old_lines[i1:i2], new_lines[j1:j2]):
+                # Word-level diff within the line
+                old_words = old_line.split()
+                new_words = new_line.split()
+                word_matcher = difflib.SequenceMatcher(None, old_words, new_words)
+
+                # Build old line with changed words highlighted
+                old_parts = []
+                for wtag, wi1, wi2, wj1, wj2 in word_matcher.get_opcodes():
+                    if wtag == 'equal':
+                        for word in old_words[wi1:wi2]:
+                            old_parts.append(rich_escape(word))
+                    elif wtag in ('replace', 'delete'):
+                        for word in old_words[wi1:wi2]:
+                            old_parts.append(f"[white on #4a1515]{rich_escape(word)}[/white on #4a1515]")
+                    # 'insert' doesn't affect old line
+
+                # Build new line with changed words highlighted
+                new_parts = []
+                for wtag, wi1, wi2, wj1, wj2 in word_matcher.get_opcodes():
+                    if wtag == 'equal':
+                        for word in new_words[wj1:wj2]:
+                            new_parts.append(rich_escape(word))
+                    elif wtag in ('replace', 'insert'):
+                        for word in new_words[wj1:wj2]:
+                            new_parts.append(f"[white on #1a4a1a]{rich_escape(word)}[/white on #1a4a1a]")
+                    # 'delete' doesn't affect new line
+
+                output_parts.append(f"    [#cc6666]- {' '.join(old_parts)}[/#cc6666]")
+                output_parts.append(f"    [#66cc66]+ {' '.join(new_parts)}[/#66cc66]")
+
+            # Handle unequal line counts in replace
+            extra_old = old_lines[i1 + min(i2-i1, j2-j1):i2]
+            extra_new = new_lines[j1 + min(i2-i1, j2-j1):j2]
+            for line in extra_old:
+                escaped = rich_escape(line) if line else " "
+                output_parts.append(f"    [#cc6666]- [white on #4a1515]{escaped}[/white on #4a1515][/#cc6666]")
+            for line in extra_new:
+                escaped = rich_escape(line) if line else " "
+                output_parts.append(f"    [#66cc66]+ [white on #1a4a1a]{escaped}[/white on #1a4a1a][/#66cc66]")
+        elif tag == 'delete':
+            # Removed lines - whole line is highlighted
+            for line in old_lines[i1:i2]:
+                escaped = rich_escape(line) if line else " "
+                output_parts.append(f"    [#cc6666]- [white on #4a1515]{escaped}[/white on #4a1515][/#cc6666]")
+        elif tag == 'insert':
+            # Added lines - whole line is highlighted
+            for line in new_lines[j1:j2]:
+                escaped = rich_escape(line) if line else " "
+                output_parts.append(f"    [#66cc66]+ [white on #1a4a1a]{escaped}[/white on #1a4a1a][/#66cc66]")
+
+    if truncated:
+        remaining = total_lines - max_lines
+        output_parts.append(f"    [dim]  ... ({remaining} more lines)[/dim]")
 
     return '\n'.join(output_parts)
 
