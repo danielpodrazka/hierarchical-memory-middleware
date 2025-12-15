@@ -579,7 +579,7 @@ async def save_conversation_to_json(manager, conversation_id: str, export_dir: s
 @app.command()
 def chat(
     conversation_id: Optional[str] = typer.Option(
-        None, "--conversation-id", "-c", help="Resume existing conversation"
+        None, "--conversation-id", "-c", help="Resume conversation by ID, partial ID, or name"
     ),
     name: Optional[str] = typer.Option(
         None, "--name", "-n", help="Create or resume conversation by name"
@@ -732,13 +732,13 @@ async def _chat_session(
             )
             sys.exit(1)
         elif conversation_id:
-            # Use conversation ID (supports partial matching)
+            # Use conversation ID (supports partial ID matching and names)
             try:
-                resolved_conversation_id = await resolve_conversation_id(
+                resolved_conversation_id = await resolve_conversation_identifier(
                     conversation_id, config.db_path
                 )
                 console.print(
-                    f"[dim]Resolved conversation ID: {resolved_conversation_id}[/dim]"
+                    f"[dim]Resolved conversation: {resolved_conversation_id}[/dim]"
                 )
             except ValueError as e:
                 console.print(f"[red]❌ {e}[/red]")
