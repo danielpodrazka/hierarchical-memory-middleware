@@ -12,7 +12,7 @@ Usage:
 import argparse
 import logging
 import sys
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from fastmcp import FastMCP
 
@@ -127,7 +127,9 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
                 "results": [
                     {
                         "node_id": r.node.node_id,
-                        "content_preview": r.node.content[:300] if r.node.content else "",
+                        "content_preview": r.node.content[:300]
+                        if r.node.content
+                        else "",
                         "summary": r.node.summary,
                         "relevance": r.relevance_score,
                         "match_type": r.match_type,
@@ -356,7 +358,9 @@ def main():
     parser.add_argument("--db-path", required=True, help="Path to DuckDB database")
     args = parser.parse_args()
 
-    logger.info(f"Starting stdio memory server for conversation: {args.conversation_id}")
+    logger.info(
+        f"Starting stdio memory server for conversation: {args.conversation_id}"
+    )
 
     try:
         mcp = create_memory_server(args.conversation_id, args.db_path)
