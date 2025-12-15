@@ -1281,7 +1281,7 @@ async def remove_node_from_chat(manager, node_id: int, conv_id: str):
         console.print(f"\n[yellow]📄 Node {node_id} Details:[/yellow]")
         console.print(f"Type: {node_type_icon} {node_details['node_type']}")
         console.print(f"Timestamp: {node_details['timestamp']}")
-        console.print(f"Level: {node_details['level']}")
+        console.print(f"Level: {node_details['compression_level']}")
         console.print(f"Content Preview: {rich_escape(content_preview)}")
 
         # Ask for confirmation
@@ -1715,7 +1715,7 @@ async def _remove_node(
         console.print(f"\n[yellow]📄 Node {node_id} Details:[/yellow]")
         console.print(f"Type: {node_type_icon} {node_details['node_type']}")
         console.print(f"Timestamp: {node_details['timestamp']}")
-        console.print(f"Level: {node_details['level']}")
+        console.print(f"Level: {node_details['compression_level']}")
         console.print(f"Content Preview: {rich_escape(content_preview)}")
 
         # Confirmation unless --force is used
