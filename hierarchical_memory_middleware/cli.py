@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import signal
 import sys
 import tempfile
@@ -49,6 +50,75 @@ PASTE_STORAGE_DIR = Path(tempfile.gettempdir()) / "hmm_paste_storage"
 # Thresholds for large paste handling
 LARGE_PASTE_THRESHOLD = 5000  # characters
 LARGE_PASTE_LINES_THRESHOLD = 8  # lines
+
+# Funny thinking messages for the initial AI response delay
+THINKING_MESSAGES = [
+    "Consulting the neural oracle",
+    "Warming up the neurons",
+    "Summoning the silicon spirits",
+    "Crunching some matrices",
+    "Thinking really hard",
+    "Loading wisdom",
+    "Brewing a response",
+    "Contemplating the void",
+    "Gathering thoughts from the cloud",
+    "Consulting my training data",
+    "Running mental gymnastics",
+    "Channeling the transformer",
+    "Pondering your request",
+    "Assembling tokens",
+    "Engaging turbo mode",
+]
+
+
+class SimpleSpinner:
+    """A simple spinner that updates in-place without flickering.
+
+    Uses ANSI escape codes to update just the spinner character,
+    avoiding full line redraws that cause terminal flickering.
+    """
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    # ANSI color codes
+    CYAN = "\033[36m"
+    RESET = "\033[0m"
+
+    def __init__(self, message: str, emoji: str = "🔧"):
+        self.message = message
+        self.emoji = emoji
+        self.frame_idx = 0
+        self.running = False
+        self.task: Optional[asyncio.Task] = None
+        self._line_len = 0
+
+    def _write_frame(self):
+        """Write the current spinner frame using carriage return to update in place."""
+        frame = self.FRAMES[self.frame_idx]
+        line = f"  {self.CYAN}{frame}{self.RESET} {self.emoji} {self.message}..."
+        # Carriage return to beginning of line, write new content
+        sys.stdout.write(f"\r{line}")
+        sys.stdout.flush()
+        self._line_len = len(line) + 10  # Account for ANSI codes
+
+    async def spin(self):
+        """Animate the spinner."""
+        self.running = True
+        while self.running:
+            self._write_frame()
+            self.frame_idx = (self.frame_idx + 1) % len(self.FRAMES)
+            await asyncio.sleep(0.1)
+
+    def start(self):
+        """Start the spinner animation."""
+        self.task = asyncio.create_task(self.spin())
+
+    def stop(self):
+        """Stop the spinner and clear the line."""
+        self.running = False
+        if self.task:
+            self.task.cancel()
+        # Clear the spinner line with spaces and return cursor
+        sys.stdout.write("\r" + " " * self._line_len + "\r")
+        sys.stdout.flush()
 
 
 def format_edit_diff(old_string: str, new_string: str, file_path: str, max_output_lines: int = 100) -> str:
@@ -149,6 +219,14 @@ def format_edit_diff(old_string: str, new_string: str, file_path: str, max_outpu
         output_parts.append(f"    [dim]  ... ({remaining} more lines)[/dim]")
 
     return '\n'.join(output_parts)
+
+
+def format_tokens(tokens: float) -> str:
+    """Format token count with appropriate suffix (k for thousands, M for millions)."""
+    if tokens >= 1_000_000:
+        return f"{tokens / 1_000_000:.1f}M"
+    else:
+        return f"{tokens / 1000:.0f}k"
 
 
 def sanitize_input(text: str) -> str:
@@ -827,6 +905,36 @@ async def _chat_session(
         yielded_to_human = True  # Start by waiting for user input
         interrupted = False
 
+        # Load conversation totals from database (tracks usage across sessions)
+        try:
+            existing_usage = await manager.storage.get_conversation_token_usage(conv_id)
+            conversation_totals = {
+                "input_tokens": existing_usage.get("total_input_tokens", 0),
+                "output_tokens": existing_usage.get("total_output_tokens", 0),
+                "cache_read_tokens": existing_usage.get("total_cache_read_tokens", 0),
+                "cost_usd": existing_usage.get("total_cost_usd", 0.0),
+                "turns": existing_usage.get("turn_count", 0),
+            }
+            if conversation_totals["turns"] > 0:
+                # Total input = new input tokens + cached tokens
+                total_input = conversation_totals['input_tokens'] + conversation_totals['cache_read_tokens']
+                console.print(
+                    f"[dim]📊 Conversation totals: {conversation_totals['turns']} turns, "
+                    f"{format_tokens(total_input)} in, "
+                    f"{format_tokens(conversation_totals['output_tokens'])} out, "
+                    f"${conversation_totals['cost_usd']:.2f}[/dim]"
+                )
+                console.print()
+        except Exception as e:
+            logger.debug(f"Could not load existing token usage: {e}")
+            conversation_totals = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cost_usd": 0.0,
+                "turns": 0,
+            }
+
         # Setup signal handler for Ctrl+C in agentic mode
         def handle_sigint(signum, frame):
             nonlocal interrupted, yielded_to_human
@@ -919,7 +1027,17 @@ async def _chat_session(
                     )
                     pending_tools = {}  # Track tool_id -> tool_name for matching results
                     stream_interrupted = False
-                    last_usage = None  # Track token usage from UsageEvent
+                    # Track accumulated token usage across all UsageEvents in the turn
+                    accumulated_usage = {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_read_tokens": 0,
+                        "cache_creation_tokens": 0,
+                        "total_tokens": 0,
+                        "cost_usd": 0.0,
+                        "duration_ms": 0,
+                        "model": None,
+                    }
 
                     # Use tool events only for Agent SDK manager
                     if is_agent_sdk:
@@ -932,6 +1050,11 @@ async def _chat_session(
                     # Track active tool status for progress indicator
                     active_tool_status = None
                     active_tool_name = None
+
+                    # Start "thinking" spinner while waiting for first response
+                    thinking_message = random.choice(THINKING_MESSAGES)
+                    thinking_spinner = SimpleSpinner(thinking_message, emoji="🧠")
+                    thinking_spinner.start()
 
                     # Track last event time for timeout detection
                     last_event_time = time.time()
@@ -962,6 +1085,11 @@ async def _chat_session(
 
                     try:
                         async for event in stream_iter:
+                            # Stop thinking spinner on first event
+                            if thinking_spinner:
+                                thinking_spinner.stop()
+                                thinking_spinner = None
+
                             # Update last event time for timeout detection
                             last_event_time = time.time()
                             if timeout_warning_shown:
@@ -972,6 +1100,9 @@ async def _chat_session(
                             # Check if we've been interrupted by signal handler
                             if interrupted:
                                 stream_interrupted = True
+                                if thinking_spinner:
+                                    thinking_spinner.stop()
+                                    thinking_spinner = None
                                 if active_tool_status:
                                     active_tool_status.stop()
                                     active_tool_status = None
@@ -985,11 +1116,10 @@ async def _chat_session(
                                 console.print(rich_escape(event), end="", style="white")
                                 response_chunks.append(event)
                             elif isinstance(event, ToolCallStartEvent):
-                                # Tool call starting - show static message (no spinner yet)
-                                # The spinner will start when ToolCallEvent arrives with full details
-                                # This avoids rapid spinner start/stop flickering
+                                # Tool call starting - show spinner with in-place updates
+                                # Uses SimpleSpinner which updates just the spinner char to avoid flickering
 
-                                # Stop any previous tool progress
+                                # Stop any previous tool spinner
                                 if active_tool_status:
                                     active_tool_status.stop()
                                     active_tool_status = None
@@ -1004,13 +1134,10 @@ async def _chat_session(
                                     # Don't show anything for yield_to_human, it will be handled in ToolCallEvent
                                     pass
                                 else:
-                                    # Show static "preparing" message instead of spinner
-                                    # This avoids flicker from rapid spinner start/stop
-                                    console.print()
-                                    console.print(
-                                        f"  [cyan]⏳ 🔧 {event.tool_name}...[/cyan]",
-                                        end=""
-                                    )
+                                    # Start a simple in-place spinner (no flickering)
+                                    console.print()  # Move to new line for spinner
+                                    active_tool_status = SimpleSpinner(event.tool_name)
+                                    active_tool_status.start()
 
                             elif isinstance(event, ToolCallEvent):
                                 # Full tool call received - show details
@@ -1030,14 +1157,13 @@ async def _chat_session(
                                     reason = event.tool_input.get(
                                         "reason", "Task complete"
                                     )
-                                    console.print()  # Clear the "preparing" line
+                                    # Spinner already cleared, just print the yield message
                                     console.print(
                                         f"  [bold yellow]⏸️  Yielding to human: {rich_escape(reason)}[/bold yellow]"
                                     )
                                     logger.debug(f"DEBUG: yield_to_human detected, flag set to True")
                                 else:
-                                    # Clear the "preparing" line and display tool call with details
-                                    console.print()  # Finish the "preparing" line
+                                    # Spinner already cleared, display tool call with details
                                     console.print(
                                         f"  [cyan]▶ 🔧 {event.tool_name}[/cyan]"
                                     )
@@ -1065,13 +1191,9 @@ async def _chat_session(
                                             f"    [dim]{rich_escape(tool_input_preview)}[/dim]"
                                         )
 
-                                    # Start progress indicator for tool execution
-                                    # Use lower refresh rate to reduce flickering
-                                    active_tool_status = console.status(
-                                        f"  [cyan]⏳ {event.tool_name} running...[/cyan]",
-                                        spinner="dots",
-                                        refresh_per_second=4  # Lower refresh rate reduces flicker
-                                    )
+                                    # Start spinner for tool execution phase
+                                    console.print()  # New line for spinner
+                                    active_tool_status = SimpleSpinner(f"{event.tool_name} running")
                                     active_tool_status.start()
                             elif isinstance(event, ToolResultEvent):
                                 # Stop progress indicator when result arrives
@@ -1103,11 +1225,21 @@ async def _chat_session(
                                 )
                                 console.print()
                             elif isinstance(event, UsageEvent):
-                                # Store usage for display after response
-                                last_usage = event
+                                # Accumulate usage across all events in the turn
+                                accumulated_usage["input_tokens"] += event.input_tokens
+                                accumulated_usage["output_tokens"] += event.output_tokens
+                                accumulated_usage["cache_read_tokens"] += event.cache_read_tokens
+                                accumulated_usage["cache_creation_tokens"] += event.cache_creation_tokens
+                                accumulated_usage["total_tokens"] += event.total_tokens
+                                accumulated_usage["cost_usd"] += event.cost_usd
+                                accumulated_usage["duration_ms"] += event.duration_ms
+                                accumulated_usage["model"] = event.model
                     except KeyboardInterrupt:
                         # Direct Ctrl+C during streaming
                         stream_interrupted = True
+                        if thinking_spinner:
+                            thinking_spinner.stop()
+                            thinking_spinner = None
                         if active_tool_status:
                             active_tool_status.stop()
                             active_tool_status = None
@@ -1115,6 +1247,9 @@ async def _chat_session(
                             timeout_monitor_task.cancel()
                     except SystemExit as e:
                         # Stop progress indicator on exit
+                        if thinking_spinner:
+                            thinking_spinner.stop()
+                            thinking_spinner = None
                         if active_tool_status:
                             active_tool_status.stop()
                             active_tool_status = None
@@ -1128,6 +1263,9 @@ async def _chat_session(
                             raise
                     except Exception as stream_error:
                         # Stop progress indicator on error
+                        if thinking_spinner:
+                            thinking_spinner.stop()
+                            thinking_spinner = None
                         if active_tool_status:
                             active_tool_status.stop()
                             active_tool_status = None
@@ -1151,7 +1289,10 @@ async def _chat_session(
                             # Re-raise unexpected errors
                             raise
 
-                    # Ensure progress indicator and timeout monitor are stopped after stream completes
+                    # Ensure all spinners and timeout monitor are stopped after stream completes
+                    if thinking_spinner:
+                        thinking_spinner.stop()
+                        thinking_spinner = None
                     if active_tool_status:
                         active_tool_status.stop()
                         active_tool_status = None
@@ -1162,17 +1303,42 @@ async def _chat_session(
                         except asyncio.CancelledError:
                             pass
 
-                    # Display token usage if available
-                    if last_usage:
+                    # Display token usage if available (accumulated across all events)
+                    if accumulated_usage["input_tokens"] > 0 or accumulated_usage["output_tokens"] > 0:
+                        # Calculate total input tokens (new + cached)
+                        total_input = (
+                            accumulated_usage["input_tokens"]
+                            + accumulated_usage["cache_read_tokens"]
+                            + accumulated_usage.get("cache_creation_tokens", 0)
+                        )
+
+                        # Update conversation totals (persisted to DB by manager)
+                        conversation_totals["input_tokens"] += total_input
+                        conversation_totals["output_tokens"] += accumulated_usage["output_tokens"]
+                        conversation_totals["cache_read_tokens"] += accumulated_usage["cache_read_tokens"]
+                        conversation_totals["cost_usd"] += accumulated_usage["cost_usd"]
+                        conversation_totals["turns"] += 1
+
                         # Format usage line compactly
                         usage_parts = [
-                            f"[dim]tokens: {last_usage.input_tokens:,}→{last_usage.output_tokens:,}[/dim]",
+                            f"[dim]in: {total_input:,}→out: {accumulated_usage['output_tokens']:,}[/dim]",
                         ]
-                        if last_usage.cache_read_tokens:
-                            usage_parts.append(f"[dim]cache: {last_usage.cache_read_tokens:,}[/dim]")
-                        if last_usage.cost_usd:
-                            usage_parts.append(f"[dim]${last_usage.cost_usd:.4f}[/dim]")
-                        usage_parts.append(f"[dim]{last_usage.duration_ms/1000:.1f}s[/dim]")
+                        if accumulated_usage["cache_read_tokens"]:
+                            # Show cache hit rate as percentage
+                            cache_pct = (accumulated_usage["cache_read_tokens"] / total_input * 100) if total_input > 0 else 0
+                            usage_parts.append(f"[dim]({cache_pct:.0f}% cached)[/dim]")
+                        if accumulated_usage["cost_usd"]:
+                            usage_parts.append(f"[dim]${accumulated_usage['cost_usd']:.4f}[/dim]")
+                        usage_parts.append(f"[dim]{accumulated_usage['duration_ms']/1000:.1f}s[/dim]")
+
+                        # Add conversation totals (shows cumulative usage across all sessions)
+                        if conversation_totals["turns"] > 1:
+                            # Total input = new input tokens + cached tokens
+                            conv_total_input = conversation_totals['input_tokens'] + conversation_totals['cache_read_tokens']
+                            usage_parts.append(
+                                f"[dim cyan]│ total: {conversation_totals['turns']} turns, {format_tokens(conv_total_input)} in, {format_tokens(conversation_totals['output_tokens'])} out, ${conversation_totals['cost_usd']:.2f}[/dim cyan]"
+                            )
+
                         console.print(f"  {'  '.join(usage_parts)}")
 
                     # Add bottom border

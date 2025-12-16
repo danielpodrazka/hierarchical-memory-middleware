@@ -78,6 +78,35 @@ Total over 100 turns: 1.5M tokens
 
 *Note: KV-caching requires stable prompt prefixes. HMM's context changes every turn (as compression shifts), so caching doesn't apply. But the token savings more than compensate.*
 
+### Claude Code System Prompt Overhead
+
+When using HMM with Claude Code (via Claude Agent SDK), there's significant **hidden input cost** from Claude Code's infrastructure. While the core system prompt is only ~3k tokens, the full overhead is much larger:
+
+| Component | Tokens |
+|-----------|--------|
+| Core system prompt | ~3k |
+| **Builtin tools (16)** | **~15k** |
+| Slash commands & sub-agents | ~5k |
+| Git context (varies by repo) | ~5-20k |
+| MCP tools (if enabled) | ~2-5k |
+| **Total baseline** | **~30-50k** |
+
+**The biggest contributor is tool definitions** (~15k tokens for Claude Code's 16 builtin tools). Git context scales with repository size - repos with 10,000+ commits can add 20k+ tokens.
+
+**Example**: For a typical turn showing `in: 55k → out: 500`:
+- ~30-50k tokens = Claude Code infrastructure (tools, git context, etc.)
+- ~10-15k tokens = HMM's hierarchical memory context
+- Your actual new input is only ~500 tokens (your message)
+
+**Why this matters for cost tracking:**
+- HMM's context is genuinely small (~10-20k tokens depending on compression)
+- Claude Code infrastructure adds ~30-50k tokens per request (mostly cached)
+- Total "input" shows ~50-70k but most is cached, not your conversation
+
+This is transparent in the CLI's token display - you'll see high cache percentages (often 90%+) because the system prompt and tool definitions are reused across turns.
+
+*Sources: [claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts), [GitHub Issue #8245](https://github.com/anthropics/claude-code/issues/8245)*
+
 ## Quick Start
 
 ### Option 1: Claude Agent SDK (Recommended)
