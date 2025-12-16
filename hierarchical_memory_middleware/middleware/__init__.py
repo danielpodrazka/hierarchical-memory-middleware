@@ -10,6 +10,7 @@ from .claude_agent_sdk_manager import (
     ToolCallEvent,
     ToolResultEvent,
     UsageEvent,
+    SlackMCPConfig,
 )
 from ..config import Config
 from ..storage import DuckDBStorage
@@ -92,4 +93,5 @@ __all__ = [
     "ToolCallEvent",
     "ToolResultEvent",
     "UsageEvent",
+    "SlackMCPConfig",
 ]

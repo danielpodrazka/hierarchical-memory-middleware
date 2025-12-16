@@ -733,6 +733,123 @@ Create `~/.config/hierarchical_memory_middleware/mcp_servers.json`:
 Enabled servers start automatically with the CLI and are cleaned up on exit.
 
 
+## Slack Bot Integration
+
+The project includes a Slack bot that brings hierarchical memory to Slack conversations. Each channel/thread gets its own persistent memory, allowing the AI to maintain context across messages.
+
+### Features
+
+- **Per-channel memory**: Each Slack channel has its own conversation history with hierarchical compression
+- **Thread support**: Thread replies are tracked within the parent channel's context
+- **Slack-aware MCP tools**: The bot can fetch channel history, thread replies, search messages, and look up user info
+- **Automatic context**: Last 2 messages from the channel are automatically included for context
+
+### Setup
+
+1. **Create a Slack App** at [api.slack.com/apps](https://api.slack.com/apps)
+
+2. **Configure Bot Token Scopes** (OAuth & Permissions):
+   - `app_mentions:read` - Respond to @mentions
+   - `channels:history` - Read channel messages
+   - `channels:read` - View channel info
+   - `chat:write` - Send messages
+   - `users:read` - Look up user info
+   - `search:read` - (Optional) Search messages across workspace
+
+3. **Enable Socket Mode** (Settings → Socket Mode → Enable)
+
+4. **Subscribe to Events** (Event Subscriptions):
+   - `app_mention` - Trigger on @bot mentions
+   - `message.channels` - (Optional) Listen to all channel messages
+
+5. **Set Environment Variables**:
+   ```bash
+   # Required
+   SLACK_BOT_TOKEN=xoxb-your-bot-token
+   SLACK_APP_TOKEN=xapp-your-app-token
+
+   # Optional
+   SLACK_SIGNING_SECRET=your-signing-secret
+   ```
+
+6. **Run the bot**:
+   ```bash
+   # Using the CLI
+   hmm-slack /path/to/project
+
+   # Or with uv
+   uv run python -m hierarchical_memory_middleware.slack_bot /path/to/project
+
+   # With full permissions (for agentic tasks)
+   hmm-slack --dangerously-skip-permissions /path/to/project
+   ```
+
+### Slack MCP Tools
+
+When running in Slack, the AI has access to additional tools for interacting with the workspace:
+
+| Tool | Description |
+|------|-------------|
+| `get_slack_channel_history` | Fetch recent messages from the current channel (up to 100) |
+| `get_slack_thread_replies` | Get all replies in a specific thread |
+| `search_slack_messages` | Search messages across the workspace (requires `search:read` scope) |
+| `get_slack_user_info` | Look up user details by user ID |
+
+These tools are in addition to the standard memory tools (`search_memory`, `expand_node`, etc.).
+
+### Usage Examples
+
+Once the bot is running, mention it in any channel:
+
+```
+@YourBot What's the status of the authentication refactor?
+```
+
+The bot will:
+1. Load the channel's conversation history
+2. Include the last 2 messages for immediate context
+3. Use memory tools to search for relevant past discussions
+4. Use Slack tools if it needs more channel history
+
+For threads, reply to the bot or mention it within a thread to keep context within that thread.
+
+### Architecture
+
+```
+Slack Workspace                    HMM Slack Bot
+┌─────────────────┐               ┌─────────────────────────────────┐
+│  #engineering   │──@mention───▶ │  Slack Bot (slack_bot.py)       │
+│                 │               │    ↓                            │
+│  @Bot help me   │               │  ConversationManager            │
+│  with auth      │               │    ↓                            │
+│                 │               │  ┌─────────────────────────────┐│
+│                 │◀──response────│  │ Slack MCP Server            ││
+│  Bot: Sure,     │               │  │ (stdio_slack_memory_server) ││
+│  looking at...  │               │  │                             ││
+│                 │               │  │ Memory Tools:               ││
+└─────────────────┘               │  │ • search_memory             ││
+                                  │  │ • expand_node               ││
+                                  │  │ • get_recent_nodes          ││
+                                  │  │                             ││
+                                  │  │ Slack Tools:                ││
+                                  │  │ • get_slack_channel_history ││
+                                  │  │ • get_slack_thread_replies  ││
+                                  │  │ • search_slack_messages     ││
+                                  │  │ • get_slack_user_info       ││
+                                  │  └─────────────────────────────┘│
+                                  └─────────────────────────────────┘
+```
+
+### Permissions
+
+The `--dangerously-skip-permissions` flag allows the bot to perform file operations and run commands without confirmation. Only use this in trusted environments.
+
+For production, consider:
+- Running in a sandboxed environment
+- Limiting file system access to specific directories
+- Using read-only mode for sensitive workspaces
+
+
 ## Development
 
 ```bash

@@ -83,6 +83,17 @@ from ..compression import TfidfCompressor, CompressionManager
 from ..advanced_hierarchy import AdvancedCompressionManager
 from ..models import CompressionLevel, NodeType, HierarchyThresholds, ModelConfig, ConversationNode
 
+
+@dataclass
+class SlackMCPConfig:
+    """Configuration for Slack MCP tools.
+
+    When provided to the conversation manager, enables Slack-specific
+    tools like get_slack_channel_history, get_slack_thread_replies, etc.
+    """
+    bot_token: str  # Slack bot OAuth token (xoxb-...)
+    channel_id: str  # Current channel ID for default queries
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,6 +123,8 @@ class ClaudeAgentSDKConversationManager:
         permission_mode: str = "default",
         enable_memory_tools: bool = True,
         agentic_mode: bool = False,
+        custom_instructions: Optional[str] = None,
+        slack_mcp_config: Optional[SlackMCPConfig] = None,
     ):
         """Initialize the Claude Agent SDK conversation manager.
 
@@ -126,6 +139,8 @@ class ClaudeAgentSDKConversationManager:
                 - "bypassPermissions": No prompts (for automation)
             enable_memory_tools: Whether to enable memory tools via stdio subprocess (default: True)
             agentic_mode: Whether agentic mode is enabled (auto-continue with yield_to_human)
+            custom_instructions: Optional custom instructions to append to the system prompt
+            slack_mcp_config: Optional Slack configuration for enabling Slack MCP tools
         """
         self.config = config
         self.model_config = model_config
@@ -133,6 +148,8 @@ class ClaudeAgentSDKConversationManager:
         self.permission_mode = permission_mode
         self.enable_memory_tools = enable_memory_tools
         self.agentic_mode = agentic_mode
+        self.custom_instructions = custom_instructions
+        self.slack_mcp_config = slack_mcp_config
 
         config.setup_logging()
 
@@ -204,21 +221,45 @@ class ClaudeAgentSDKConversationManager:
         if self.enable_memory_tools and self.conversation_id:
             import sys
 
-            mcp_servers["memory"] = {
-                "command": sys.executable,
-                "args": [
-                    "-m",
-                    "hierarchical_memory_middleware.mcp_server.stdio_memory_server",
-                    "--conversation-id",
-                    self.conversation_id,
-                    "--db-path",
-                    self.config.db_path,
-                ],
-                "env": env,  # Pass same env to subprocess
-            }
-            logger.debug(
-                f"Configured memory tools via stdio subprocess for conversation {self.conversation_id}"
-            )
+            # Check if Slack MCP config is provided - use Slack-enabled server
+            if self.slack_mcp_config:
+                mcp_servers["memory"] = {
+                    "command": sys.executable,
+                    "args": [
+                        "-m",
+                        "hierarchical_memory_middleware.mcp_server.stdio_slack_memory_server",
+                        "--conversation-id",
+                        self.conversation_id,
+                        "--db-path",
+                        self.config.db_path,
+                        "--slack-bot-token",
+                        self.slack_mcp_config.bot_token,
+                        "--slack-channel-id",
+                        self.slack_mcp_config.channel_id,
+                    ],
+                    "env": env,  # Pass same env to subprocess
+                }
+                logger.debug(
+                    f"Configured Slack-enabled memory tools for conversation {self.conversation_id}, "
+                    f"channel {self.slack_mcp_config.channel_id}"
+                )
+            else:
+                # Standard memory server without Slack tools
+                mcp_servers["memory"] = {
+                    "command": sys.executable,
+                    "args": [
+                        "-m",
+                        "hierarchical_memory_middleware.mcp_server.stdio_memory_server",
+                        "--conversation-id",
+                        self.conversation_id,
+                        "--db-path",
+                        self.config.db_path,
+                    ],
+                    "env": env,  # Pass same env to subprocess
+                }
+                logger.debug(
+                    f"Configured memory tools via stdio subprocess for conversation {self.conversation_id}"
+                )
 
         # Build allowed tools list including memory tools if enabled
         allowed_tools = list(self.allowed_tools) if self.allowed_tools else []
@@ -235,6 +276,16 @@ class ClaudeAgentSDKConversationManager:
                 "mcp__memory__yield_to_human",
             ]
             allowed_tools.extend(memory_tools)
+
+            # Add Slack tools if Slack config is provided
+            if self.slack_mcp_config:
+                slack_tools = [
+                    "mcp__memory__get_slack_channel_history",
+                    "mcp__memory__get_slack_thread_replies",
+                    "mcp__memory__search_slack_messages",
+                    "mcp__memory__get_slack_user_info",
+                ]
+                allowed_tools.extend(slack_tools)
 
         return ClaudeAgentOptions(
             allowed_tools=allowed_tools if allowed_tools else None,
@@ -260,8 +311,10 @@ class ClaudeAgentSDKConversationManager:
             The conversation ID
         """
         if conversation_id:
-            # Resume existing conversation
+            # Resume existing conversation (or create if doesn't exist)
             self.conversation_id = conversation_id
+            # Ensure conversation exists in storage (for foreign key constraints)
+            await self.storage._ensure_conversation_exists(self.conversation_id)
             logger.info(f"Resumed conversation: {conversation_id}")
         else:
             # Create new conversation
@@ -744,6 +797,10 @@ Example: After completing a task, call `yield_to_human(reason="Task complete - i
 If you don't call yield_to_human, the system will automatically prompt you to continue working.
 """
             parts.append(agentic_instructions)
+
+        # Add custom instructions if provided
+        if self.custom_instructions:
+            parts.append(f"\n=== CUSTOM INSTRUCTIONS ===\n{self.custom_instructions}\n")
 
         # Add user's scratchpad/system prompt if set
         if self.conversation_id:
