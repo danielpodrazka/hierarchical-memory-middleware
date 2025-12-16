@@ -42,7 +42,7 @@ class Config:
     agent_use_subscription: bool = True
 
     # Hierarchy configuration
-    recent_node_limit: int = 10
+    recent_node_limit: int = 4
     summary_threshold: int = 20
     meta_summary_threshold: int = 50
     archive_threshold: int = 200
@@ -106,7 +106,7 @@ class Config:
             agent_allowed_tools=os.getenv("AGENT_ALLOWED_TOOLS", ""),
             agent_use_subscription=get_env_bool("AGENT_USE_SUBSCRIPTION", True),
             # Hierarchy configuration
-            recent_node_limit=get_env_int("RECENT_NODE_LIMIT", 10),
+            recent_node_limit=get_env_int("RECENT_NODE_LIMIT", 4),
             summary_threshold=get_env_int("SUMMARY_THRESHOLD", 20),
             meta_summary_threshold=get_env_int("META_SUMMARY_THRESHOLD", 50),
             archive_threshold=get_env_int("ARCHIVE_THRESHOLD", 200),

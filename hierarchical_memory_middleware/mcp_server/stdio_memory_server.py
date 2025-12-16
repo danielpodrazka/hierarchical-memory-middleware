@@ -237,13 +237,13 @@ def create_memory_server(conversation_id: str, db_path: str) -> FastMCP:
             return {"error": str(e)}
 
     @mcp.tool()
-    async def get_recent_nodes(count: int = 10) -> Dict[str, Any]:
+    async def get_recent_nodes(count: int = 4) -> Dict[str, Any]:
         """Get the most recent conversation messages.
 
         Use this tool to see recent messages in full detail.
 
         Args:
-            count: Number of recent messages to retrieve (default: 10)
+            count: Number of recent messages to retrieve (default: 4)
 
         Returns:
             List of recent messages with full content
