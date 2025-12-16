@@ -151,19 +151,22 @@ def _run_migrations(conn: duckdb.DuckDBPyConnection) -> None:
         table_names = [table[0] for table in tables]
 
         if 'token_usage' in table_names:
-            # Check if the sequence exists
-            try:
-                conn.execute("SELECT nextval('token_usage_seq')")
-                logger.debug("token_usage_seq already exists")
-            except Exception:
-                # Sequence doesn't exist, we need to recreate the table
+            # Check if table has DEFAULT nextval by looking at the DDL
+            ddl = conn.execute(
+                "SELECT sql FROM duckdb_tables() WHERE table_name = 'token_usage'"
+            ).fetchone()
+            has_default = ddl and 'nextval' in ddl[0].lower()
+
+            if not has_default:
+                # Table exists but doesn't have DEFAULT clause - recreate it
                 logger.debug("Recreating token_usage table with auto-increment...")
                 # Get existing data
                 existing_data = conn.execute("SELECT * FROM token_usage").fetchall()
-                # Drop old table
+                # Drop old table and sequence
                 conn.execute("DROP TABLE token_usage")
+                conn.execute("DROP SEQUENCE IF EXISTS token_usage_seq")
                 # Create sequence and new table
-                conn.execute("CREATE SEQUENCE IF NOT EXISTS token_usage_seq")
+                conn.execute("CREATE SEQUENCE token_usage_seq")
                 conn.execute("""
                     CREATE TABLE token_usage (
                         id INTEGER PRIMARY KEY DEFAULT nextval('token_usage_seq'),
@@ -194,6 +197,8 @@ def _run_migrations(conn: duckdb.DuckDBPyConnection) -> None:
                     for _ in range(max_id):
                         conn.execute("SELECT nextval('token_usage_seq')")
                 logger.debug("token_usage table recreated with auto-increment")
+            else:
+                logger.debug("token_usage table already has auto-increment")
     except Exception as e:
         logger.debug(f"token_usage migration failed: {e}")
         pass
