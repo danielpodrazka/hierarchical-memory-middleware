@@ -149,6 +149,11 @@ class SlackHMMBot:
         # Track active response tasks (for cancellation)
         self._active_tasks: Dict[str, asyncio.Task] = {}
 
+        # Message batching: accumulate rapid messages before processing
+        self._pending_messages: Dict[str, List[Dict[str, Any]]] = {}  # task_key -> list of message data
+        self._batch_timers: Dict[str, asyncio.Task] = {}  # task_key -> debounce timer task
+        self._batch_delay: float = 1.5  # seconds to wait for additional messages
+
         # Track Slack client per conversation (for history tool)
         self._conversation_clients: Dict[str, AsyncWebClient] = {}
         self._conversation_channels: Dict[str, str] = {}
@@ -461,6 +466,9 @@ Use these tools when you need more context about what was discussed in the chann
     ):
         """Process an incoming message and generate a response.
 
+        Uses message batching: if multiple messages arrive quickly,
+        they're combined into a single request to avoid losing messages.
+
         Args:
             channel_id: Slack channel ID
             user_id: User who sent the message
@@ -470,16 +478,78 @@ Use these tools when you need more context about what was discussed in the chann
             client: Slack web client
             recent_context: Recent messages from the channel (for context)
         """
-        # Cancel any existing task for this channel/thread
         task_key = f"{channel_id}:{thread_ts}"
+
+        # If there's an active response being generated, queue this message
         if task_key in self._active_tasks:
-            self._active_tasks[task_key].cancel()
+            # Add to pending for next batch
+            if task_key not in self._pending_messages:
+                self._pending_messages[task_key] = []
+            self._pending_messages[task_key].append({
+                "user_id": user_id,
+                "text": text,
+                "recent_context": recent_context,
+                "say": say,
+                "client": client,
+            })
+            logger.info(f"Queued message for {task_key} (response in progress)")
+            return
+
+        # Add message to pending batch
+        if task_key not in self._pending_messages:
+            self._pending_messages[task_key] = []
+
+        self._pending_messages[task_key].append({
+            "user_id": user_id,
+            "text": text,
+            "recent_context": recent_context,
+            "say": say,
+            "client": client,
+        })
+
+        # Cancel existing batch timer if any
+        if task_key in self._batch_timers:
+            self._batch_timers[task_key].cancel()
+
+        # Set a new batch timer
+        async def process_batch():
+            await asyncio.sleep(self._batch_delay)
+            await self._process_batched_messages(channel_id, thread_ts, task_key)
+
+        self._batch_timers[task_key] = asyncio.create_task(process_batch())
+
+    async def _process_batched_messages(
+        self,
+        channel_id: str,
+        thread_ts: str,
+        task_key: str,
+    ):
+        """Process all batched messages as a single request."""
+        # Get and clear pending messages
+        messages = self._pending_messages.pop(task_key, [])
+        self._batch_timers.pop(task_key, None)
+
+        if not messages:
+            return
+
+        # Combine all message texts
+        combined_texts = [msg["text"] for msg in messages]
+        combined_text = "\n\n".join(combined_texts) if len(combined_texts) > 1 else combined_texts[0]
+
+        # Use the first message's context and the last message's say/client
+        first_msg = messages[0]
+        last_msg = messages[-1]
+        recent_context = first_msg.get("recent_context")
+        say = last_msg["say"]
+        client = last_msg["client"]
+        user_id = last_msg["user_id"]
 
         # Show thinking indicator
         thinking_msg = None
         if self.slack_config.show_thinking:
+            indicator = "🤔 Thinking..." if len(messages) == 1 else f"🤔 Processing {len(messages)} messages..."
             result = await say(
-                "🤔 Thinking...",
+                indicator,
                 thread_ts=thread_ts if self.slack_config.response_thread else None,
             )
             thinking_msg = result.get("ts")
@@ -489,7 +559,7 @@ Use these tools when you need more context about what was discussed in the chann
             self._generate_response(
                 channel_id=channel_id,
                 user_id=user_id,
-                text=text,
+                text=combined_text,
                 thread_ts=thread_ts,
                 thinking_msg_ts=thinking_msg,
                 client=client,
@@ -504,6 +574,11 @@ Use these tools when you need more context about what was discussed in the chann
             logger.info(f"Task cancelled for {task_key}")
         finally:
             self._active_tasks.pop(task_key, None)
+
+            # Check if there are more pending messages that arrived while we were processing
+            if task_key in self._pending_messages and self._pending_messages[task_key]:
+                logger.info(f"Processing {len(self._pending_messages[task_key])} queued messages for {task_key}")
+                await self._process_batched_messages(channel_id, thread_ts, task_key)
 
     async def _generate_response(
         self,
@@ -814,6 +889,10 @@ Use these tools when you need more context about what was discussed in the chann
         """Clean up resources."""
         logger.info("Shutting down SlackHMMBot...")
 
+        # Cancel batch timers
+        for timer in self._batch_timers.values():
+            timer.cancel()
+
         # Cancel active tasks
         for task in self._active_tasks.values():
             task.cancel()
@@ -824,6 +903,8 @@ Use these tools when you need more context about what was discussed in the chann
 
         self._conversations.clear()
         self._active_tasks.clear()
+        self._batch_timers.clear()
+        self._pending_messages.clear()
 
         logger.info("SlackHMMBot shut down complete")
 
