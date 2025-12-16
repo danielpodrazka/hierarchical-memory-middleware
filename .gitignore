@@ -6,3 +6,37 @@ __pycache__/
 # Real-time conversation JSON files
 .conversations/
 
+# Test and demo databases
+*.db
+!*.db.example
+
+# Test files
+test_*.txt
+test_*.html
+test_*.py
+!tests/test_*.py
+
+# Debug and demo scripts
+debug_*.py
+demo_*.py
+run_debug.py
+
+# Generated reports and presentations
+reports/
+presentation.html
+presentation.pdf
+conversation-summary.md
+
+# Benchmarks data (keep the benchmark code)
+benchmarks/
+data/
+
+# Misc
+TODO.md
+example_mcp_servers.json
+
+# Coverage
+.coverage
+tests/.coverage
+htmlcov/
+
