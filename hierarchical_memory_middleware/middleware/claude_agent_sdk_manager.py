@@ -64,6 +64,19 @@ class ToolResultEvent:
     is_error: bool = False
 
 
+@dataclass
+class UsageEvent:
+    """Token usage event emitted at the end of a query."""
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    total_tokens: int
+    cost_usd: float
+    duration_ms: int
+    model: str
+
+
 from ..config import Config
 from ..storage import DuckDBStorage
 from ..compression import TfidfCompressor, CompressionManager
@@ -405,6 +418,19 @@ class ClaudeAgentSDKConversationManager:
                         f"Query completed: duration={message.duration_ms}ms, "
                         f"cost=${message.total_cost_usd}"
                     )
+                    # Save token usage
+                    if self.conversation_id:
+                        usage = message.usage or {}
+                        await self.storage.save_token_usage(
+                            conversation_id=self.conversation_id,
+                            input_tokens=usage.get("input_tokens", 0),
+                            output_tokens=usage.get("output_tokens", 0),
+                            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+                            cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
+                            cost_usd=message.total_cost_usd,
+                            duration_ms=message.duration_ms,
+                            model=self.model_config.model_name,
+                        )
         except Exception as e:
             logger.exception(f"Error during Claude Agent SDK query: {e}")
             raise
@@ -543,6 +569,39 @@ class ClaudeAgentSDKConversationManager:
                         f"Query completed: duration={message.duration_ms}ms, "
                         f"cost=${message.total_cost_usd}"
                     )
+                    # Parse and yield usage data
+                    usage = message.usage or {}
+                    input_tokens = usage.get("input_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0)
+                    cache_read = usage.get("cache_read_input_tokens", 0)
+                    cache_creation = usage.get("cache_creation_input_tokens", 0)
+                    total_tokens = input_tokens + output_tokens
+
+                    # Save token usage to storage
+                    if self.conversation_id:
+                        await self.storage.save_token_usage(
+                            conversation_id=self.conversation_id,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            cache_read_tokens=cache_read,
+                            cache_creation_tokens=cache_creation,
+                            cost_usd=message.total_cost_usd,
+                            duration_ms=message.duration_ms,
+                            model=self.model_config.model_name,
+                        )
+
+                    # Yield usage event if tool events are enabled
+                    if include_tool_events:
+                        yield UsageEvent(
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            cache_read_tokens=cache_read,
+                            cache_creation_tokens=cache_creation,
+                            total_tokens=total_tokens,
+                            cost_usd=message.total_cost_usd or 0.0,
+                            duration_ms=message.duration_ms,
+                            model=self.model_config.model_name,
+                        )
         except Exception as e:
             # Check if this is a SIGINT (Ctrl+C) interrupt
             # Exit codes: -2 (Python internal), 130 (128+2, standard SIGINT)

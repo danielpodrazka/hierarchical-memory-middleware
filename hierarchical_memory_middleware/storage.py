@@ -1252,3 +1252,140 @@ class DuckDBStorage:
             )
 
             return new_prompt
+
+    async def save_token_usage(
+        self,
+        conversation_id: str,
+        input_tokens: Optional[int] = None,
+        output_tokens: Optional[int] = None,
+        cache_read_tokens: Optional[int] = None,
+        cache_creation_tokens: Optional[int] = None,
+        cost_usd: Optional[float] = None,
+        duration_ms: Optional[int] = None,
+        model: Optional[str] = None,
+    ) -> int:
+        """Save token usage for a conversation turn.
+
+        Args:
+            conversation_id: The conversation ID
+            input_tokens: Number of input tokens
+            output_tokens: Number of output tokens
+            cache_read_tokens: Tokens read from cache
+            cache_creation_tokens: Tokens used for cache creation
+            cost_usd: Cost in USD
+            duration_ms: Duration in milliseconds
+            model: Model used
+
+        Returns:
+            The ID of the created usage record
+        """
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+
+        with self._get_connection() as conn:
+            result = conn.execute(
+                """
+                INSERT INTO token_usage (
+                    conversation_id, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_tokens,
+                    cost_usd, duration_ms, model
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    conversation_id,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    total_tokens,
+                    cost_usd,
+                    duration_ms,
+                    model,
+                ),
+            ).fetchone()
+            return result[0] if result else 0
+
+    async def get_conversation_token_usage(
+        self, conversation_id: str
+    ) -> Dict[str, Any]:
+        """Get aggregated token usage for a conversation.
+
+        Args:
+            conversation_id: The conversation ID
+
+        Returns:
+            Dictionary with total and per-turn token usage statistics
+        """
+        with self._get_connection() as conn:
+            # Get aggregated totals
+            totals = conn.execute(
+                """
+                SELECT
+                    COUNT(*) as turn_count,
+                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
+                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+                    COALESCE(SUM(total_tokens), 0) as total_tokens,
+                    COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+                    COALESCE(SUM(duration_ms), 0) as total_duration_ms
+                FROM token_usage
+                WHERE conversation_id = ?
+                """,
+                (conversation_id,),
+            ).fetchone()
+
+            if not totals or totals[0] == 0:
+                return {
+                    "turn_count": 0,
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cache_read_tokens": 0,
+                    "total_cache_creation_tokens": 0,
+                    "total_tokens": 0,
+                    "total_cost_usd": 0.0,
+                    "total_duration_ms": 0,
+                    "recent_turns": [],
+                }
+
+            # Get recent turns (last 5)
+            recent = conn.execute(
+                """
+                SELECT
+                    timestamp, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens,
+                    total_tokens, cost_usd, duration_ms, model
+                FROM token_usage
+                WHERE conversation_id = ?
+                ORDER BY timestamp DESC
+                LIMIT 5
+                """,
+                (conversation_id,),
+            ).fetchall()
+
+            recent_turns = [
+                {
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "input_tokens": row[1],
+                    "output_tokens": row[2],
+                    "cache_read_tokens": row[3],
+                    "cache_creation_tokens": row[4],
+                    "total_tokens": row[5],
+                    "cost_usd": row[6],
+                    "duration_ms": row[7],
+                    "model": row[8],
+                }
+                for row in recent
+            ]
+
+            return {
+                "turn_count": totals[0],
+                "total_input_tokens": totals[1],
+                "total_output_tokens": totals[2],
+                "total_cache_read_tokens": totals[3],
+                "total_cache_creation_tokens": totals[4],
+                "total_tokens": totals[5],
+                "total_cost_usd": float(totals[6]) if totals[6] else 0.0,
+                "total_duration_ms": totals[7],
+                "recent_turns": recent_turns,
+            }

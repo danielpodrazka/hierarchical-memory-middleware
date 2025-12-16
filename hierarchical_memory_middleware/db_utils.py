@@ -214,7 +214,28 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
 
+    # Create token usage table for tracking API costs
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS token_usage (
+            id INTEGER PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            cache_read_tokens INTEGER,
+            cache_creation_tokens INTEGER,
+            total_tokens INTEGER,
+            cost_usd FLOAT,
+            duration_ms INTEGER,
+            model TEXT,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_usage_conversation ON token_usage(conversation_id)"
+    )
+
     # Run migrations
     _run_migrations(conn)
-    
+
     logger.debug("Database schema initialized")

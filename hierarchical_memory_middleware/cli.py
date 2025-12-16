@@ -27,7 +27,7 @@ from rich.status import Status
 from rich.markup import escape as rich_escape
 
 from .config import Config
-from .middleware import create_conversation_manager, ToolCallStartEvent, ToolCallEvent, ToolResultEvent
+from .middleware import create_conversation_manager, ToolCallStartEvent, ToolCallEvent, ToolResultEvent, UsageEvent
 from .middleware.conversation_manager import HierarchicalConversationManager
 from .middleware.claude_agent_sdk_manager import ClaudeAgentSDKConversationManager
 from .models import CompressionLevel, NodeType
@@ -809,6 +809,9 @@ async def _chat_session(
             "   [yellow]/stats[/yellow]               - Show detailed statistics"
         )
         console.print(
+            "   [yellow]/tokens[/yellow]              - Show token usage for this conversation"
+        )
+        console.print(
             "   [yellow]/remove_node <node_id>[/yellow] - Remove a node (with confirmation)"
         )
         console.print(
@@ -916,6 +919,7 @@ async def _chat_session(
                     )
                     pending_tools = {}  # Track tool_id -> tool_name for matching results
                     stream_interrupted = False
+                    last_usage = None  # Track token usage from UsageEvent
 
                     # Use tool events only for Agent SDK manager
                     if is_agent_sdk:
@@ -1098,6 +1102,9 @@ async def _chat_session(
                                     f"  [cyan]◀ {tool_name}:[/cyan] [{style}]{rich_escape(result_preview)}[/{style}]"
                                 )
                                 console.print()
+                            elif isinstance(event, UsageEvent):
+                                # Store usage for display after response
+                                last_usage = event
                     except KeyboardInterrupt:
                         # Direct Ctrl+C during streaming
                         stream_interrupted = True
@@ -1154,6 +1161,19 @@ async def _chat_session(
                             await timeout_monitor_task
                         except asyncio.CancelledError:
                             pass
+
+                    # Display token usage if available
+                    if last_usage:
+                        # Format usage line compactly
+                        usage_parts = [
+                            f"[dim]tokens: {last_usage.input_tokens:,}→{last_usage.output_tokens:,}[/dim]",
+                        ]
+                        if last_usage.cache_read_tokens:
+                            usage_parts.append(f"[dim]cache: {last_usage.cache_read_tokens:,}[/dim]")
+                        if last_usage.cost_usd:
+                            usage_parts.append(f"[dim]${last_usage.cost_usd:.4f}[/dim]")
+                        usage_parts.append(f"[dim]{last_usage.duration_ms/1000:.1f}s[/dim]")
+                        console.print(f"  {'  '.join(usage_parts)}")
 
                     # Add bottom border
                     console.print()
@@ -1331,6 +1351,9 @@ async def handle_chat_command(command: str, manager, conv_id: str, export_dir: s
             "   [yellow]/stats[/yellow]               - Show detailed statistics"
         )
         console.print(
+            "   [yellow]/tokens[/yellow]              - Show token usage for this conversation"
+        )
+        console.print(
             "   [yellow]/remove_node <node_id>[/yellow] - Remove a node (with confirmation)"
         )
         console.print(
@@ -1383,6 +1406,9 @@ async def handle_chat_command(command: str, manager, conv_id: str, export_dir: s
 
     elif cmd == "/stats":
         await show_detailed_stats(manager)
+
+    elif cmd == "/tokens":
+        await show_token_usage(manager, conv_id)
 
     elif cmd == "/rename":
         if args:
@@ -1763,6 +1789,14 @@ async def show_detailed_stats(manager):
             console.print(f"[red]❌ Error getting stats: {summary['error']}[/red]")
             return
 
+        # Extract compression levels
+        compression_levels = summary.get("compression_levels", {})
+        full_nodes = compression_levels.get("full", 0)
+        summary_nodes = compression_levels.get("summary", 0)
+        meta_nodes = compression_levels.get("meta", 0)
+        archive_nodes = compression_levels.get("archive", 0)
+        compressed_nodes = summary_nodes + meta_nodes + archive_nodes
+
         # Create comprehensive stats table
         table = Table(title="📊 Detailed Conversation Statistics", show_header=True)
         table.add_column("Metric", style="cyan")
@@ -1775,28 +1809,113 @@ async def show_detailed_stats(manager):
             "Total conversation nodes in database",
         )
         table.add_row(
-            "Recent Nodes",
-            str(summary.get("recent_nodes", 0)),
+            "Recent Nodes (FULL)",
+            str(full_nodes),
             "Nodes at FULL compression level",
         )
         table.add_row(
+            "Summary Nodes",
+            str(summary_nodes),
+            "Nodes at SUMMARY compression level",
+        )
+        table.add_row(
+            "Meta Nodes",
+            str(meta_nodes),
+            "Nodes at META compression level",
+        )
+        table.add_row(
+            "Archive Nodes",
+            str(archive_nodes),
+            "Nodes at ARCHIVE compression level",
+        )
+        table.add_row(
             "Compressed Nodes",
-            str(summary.get("compressed_nodes", 0)),
-            "Nodes at SUMMARY/META/ARCHIVE levels",
+            str(compressed_nodes),
+            "Total nodes at SUMMARY/META/ARCHIVE levels",
         )
 
-        # Add additional metrics if available
-        if "compression_ratio" in summary:
+        # Add token stats if available
+        token_stats = summary.get("token_stats", {})
+        if token_stats:
             table.add_row(
-                "Compression Ratio",
-                f"{summary['compression_ratio']:.2%}",
-                "Space saved through compression",
+                "Current Tokens",
+                str(token_stats.get("total_current_tokens", 0)),
+                "Total tokens in current context",
             )
+            table.add_row(
+                "Original Tokens",
+                str(token_stats.get("total_original_tokens", 0)),
+                "Original tokens before compression",
+            )
+            saved_percent = token_stats.get("tokens_saved_percent", 0)
+            if saved_percent > 0:
+                table.add_row(
+                    "Compression Savings",
+                    f"{saved_percent:.1f}%",
+                    "Tokens saved through compression",
+                )
 
         console.print(table)
 
     except Exception as e:
         console.print(f"[red]❌ Error getting detailed stats: {e}[/red]")
+
+
+async def show_token_usage(manager, conv_id: str):
+    """Show token usage statistics for the conversation."""
+    try:
+        usage = await manager.storage.get_conversation_token_usage(conv_id)
+
+        if usage.get("turn_count", 0) == 0:
+            console.print("[yellow]No token usage data recorded yet.[/yellow]")
+            return
+
+        # Create usage table
+        table = Table(title="🎟️ Token Usage Statistics", show_header=True)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green", justify="right")
+
+        table.add_row("Total Turns", f"{usage['turn_count']:,}")
+        table.add_row("Total Input Tokens", f"{usage['total_input_tokens']:,}")
+        table.add_row("Total Output Tokens", f"{usage['total_output_tokens']:,}")
+        table.add_row("Total Tokens", f"{usage['total_tokens']:,}")
+
+        if usage.get("total_cache_read_tokens", 0) > 0:
+            table.add_row("Cache Read Tokens", f"{usage['total_cache_read_tokens']:,}")
+        if usage.get("total_cache_creation_tokens", 0) > 0:
+            table.add_row("Cache Creation Tokens", f"{usage['total_cache_creation_tokens']:,}")
+
+        if usage.get("total_cost_usd", 0) > 0:
+            table.add_row("Total Cost", f"${usage['total_cost_usd']:.4f}")
+
+        if usage.get("total_duration_ms", 0) > 0:
+            total_seconds = usage["total_duration_ms"] / 1000
+            if total_seconds >= 60:
+                minutes = int(total_seconds // 60)
+                seconds = total_seconds % 60
+                table.add_row("Total Time", f"{minutes}m {seconds:.1f}s")
+            else:
+                table.add_row("Total Time", f"{total_seconds:.1f}s")
+
+        console.print(table)
+
+        # Show recent turns
+        recent_turns = usage.get("recent_turns", [])
+        if recent_turns:
+            console.print()
+            console.print("[bold]Recent Turns (last 5):[/bold]")
+            for turn in recent_turns:
+                input_t = turn.get("input_tokens", 0) or 0
+                output_t = turn.get("output_tokens", 0) or 0
+                cost = turn.get("cost_usd", 0) or 0
+                duration = (turn.get("duration_ms", 0) or 0) / 1000
+                console.print(
+                    f"  [dim]• {input_t:,}→{output_t:,} tokens"
+                    f"  ${cost:.4f}  {duration:.1f}s[/dim]"
+                )
+
+    except Exception as e:
+        console.print(f"[red]❌ Error getting token usage: {e}[/red]")
 
 
 # Add other commands from the original CLI

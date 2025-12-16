@@ -9,6 +9,7 @@ from .claude_agent_sdk_manager import (
     ToolCallStartEvent,
     ToolCallEvent,
     ToolResultEvent,
+    UsageEvent,
 )
 from ..config import Config
 from ..storage import DuckDBStorage
@@ -90,4 +91,5 @@ __all__ = [
     "ToolCallStartEvent",
     "ToolCallEvent",
     "ToolResultEvent",
+    "UsageEvent",
 ]
