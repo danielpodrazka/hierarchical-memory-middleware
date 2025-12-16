@@ -839,10 +839,11 @@ async def test_get_conversation_summary_successful(mock_config):
     }
     mock_stats.last_updated = datetime.now()
 
+    # Mock nodes need content and summary attributes for get_context_text/get_original_text
     mock_nodes = [
-        Mock(level=CompressionLevel.FULL),
-        Mock(level=CompressionLevel.FULL),
-        Mock(level=CompressionLevel.SUMMARY),
+        Mock(level=CompressionLevel.FULL, content="Full content 1", summary=None),
+        Mock(level=CompressionLevel.FULL, content="Full content 2", summary=None),
+        Mock(level=CompressionLevel.SUMMARY, content="Original content", summary="Summarized"),
     ]
 
     with (
@@ -864,6 +865,7 @@ async def test_get_conversation_summary_successful(mock_config):
         assert summary["compressed_nodes"] == 1
         assert "compression_stats" in summary
         assert "last_updated" in summary
+        assert "token_stats" in summary  # New field added to summary
 
 
 @pytest.mark.asyncio
@@ -897,11 +899,12 @@ async def test_get_conversation_summary_compression_stats(mock_config):
     }
     mock_stats.last_updated = current_time
 
+    # Mock nodes need content and summary attributes for get_context_text/get_original_text
     mock_nodes = []
     for i in range(8):
-        mock_nodes.append(Mock(level=CompressionLevel.FULL))
+        mock_nodes.append(Mock(level=CompressionLevel.FULL, content=f"Full content {i}", summary=None))
     for i in range(3):
-        mock_nodes.append(Mock(level=CompressionLevel.SUMMARY))
+        mock_nodes.append(Mock(level=CompressionLevel.SUMMARY, content=f"Original content {i}", summary=f"Summary {i}"))
 
     with (
         patch.object(

@@ -13,7 +13,7 @@ def test_config_defaults():
     assert config.work_model == "claude-agent-sonnet"
     assert config.embedding_model == "text-embedding-3-small"
     assert config.db_path == "./conversations.db"
-    assert config.recent_node_limit == 10
+    assert config.recent_node_limit == 4
     assert config.summary_threshold == 20
     assert config.meta_summary_threshold == 50
     assert config.archive_threshold == 200
@@ -82,5 +82,5 @@ def test_env_parsing_edge_cases():
         config = Config.from_env(env_file=None)
 
         assert config.enable_mcp_tools is True  # TRUE should parse as true
-        assert config.recent_node_limit == 10  # invalid int should use default
+        assert config.recent_node_limit == 4  # invalid int should use default (4)
         assert config.summary_threshold == 30  # valid int should parse

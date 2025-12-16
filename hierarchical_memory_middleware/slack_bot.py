@@ -79,7 +79,8 @@ class SlackBotConfig:
     app_token: str
     # Optional customization
     response_thread: bool = True  # Reply in threads
-    show_tool_calls: bool = True  # Show tool usage
+    show_tool_calls: bool = True  # Show tool usage during streaming (hidden in final message)
+    show_tool_details: bool = True  # Show tool arguments during execution
     show_thinking: bool = True  # Show "thinking" status
     max_message_length: int = 3000  # Slack message limit (actual is 40k, but we chunk)
     update_interval_seconds: float = 2.0  # How often to update streaming message
@@ -100,6 +101,7 @@ class SlackBotConfig:
             app_token=app_token,
             response_thread=os.environ.get("SLACK_RESPONSE_THREAD", "true").lower() == "true",
             show_tool_calls=os.environ.get("SLACK_SHOW_TOOL_CALLS", "true").lower() == "true",
+            show_tool_details=os.environ.get("SLACK_SHOW_TOOL_DETAILS", "true").lower() == "true",
             show_thinking=os.environ.get("SLACK_SHOW_THINKING", "true").lower() == "true",
         )
 
@@ -447,8 +449,8 @@ Use these tools when you need more context about what was discussed in the chann
                 if isinstance(event, str):
                     response_text += event
 
-            # Update with final response
-            await respond(self._format_response(response_text))
+            # Update with final response (no tool info for slash commands - simple mode)
+            await respond(self._format_response(response_text, is_final=True))
 
         except Exception as e:
             logger.exception(f"Error processing slash command: {e}")
@@ -620,7 +622,9 @@ Use these tools when you need more context about what was discussed in the chann
 
         # Collect response
         response_text = ""
-        tool_calls: List[str] = []
+        # Track tool calls: {tool_id: {"name": str, "args": dict, "result": str, "is_error": bool}}
+        active_tool_calls: Dict[str, Dict[str, Any]] = {}
+        completed_tool_names: List[str] = []  # Just tool names for final message
         last_update = datetime.now()
 
         try:
@@ -636,21 +640,50 @@ Use these tools when you need more context about what was discussed in the chann
                             channel_id=channel_id,
                             message_ts=thinking_msg_ts,
                             text=response_text,
-                            tool_calls=tool_calls,
+                            active_tools=active_tool_calls,
+                            completed_tool_names=completed_tool_names,
                             is_final=False,
                         )
                         last_update = now
 
                 elif isinstance(event, ToolCallEvent):
                     if self.slack_config.show_tool_calls:
-                        tool_calls.append(f"🔧 `{event.tool_name}`")
+                        # Track the active tool call with details
+                        active_tool_calls[event.tool_id] = {
+                            "name": event.tool_name,
+                            "args": event.tool_input,
+                            "result": None,
+                            "is_error": False,
+                        }
                         # Update to show tool usage
                         await self._update_response_message(
                             client=client,
                             channel_id=channel_id,
                             message_ts=thinking_msg_ts,
                             text=response_text,
-                            tool_calls=tool_calls,
+                            active_tools=active_tool_calls,
+                            completed_tool_names=completed_tool_names,
+                            is_final=False,
+                        )
+
+                elif isinstance(event, ToolResultEvent):
+                    if self.slack_config.show_tool_calls:
+                        # Update tool call with result
+                        if event.tool_id in active_tool_calls:
+                            tool_info = active_tool_calls[event.tool_id]
+                            tool_info["result"] = event.content
+                            tool_info["is_error"] = event.is_error
+                            # Move to completed
+                            completed_tool_names.append(tool_info["name"])
+                            del active_tool_calls[event.tool_id]
+                        # Update to show tool result briefly
+                        await self._update_response_message(
+                            client=client,
+                            channel_id=channel_id,
+                            message_ts=thinking_msg_ts,
+                            text=response_text,
+                            active_tools=active_tool_calls,
+                            completed_tool_names=completed_tool_names,
                             is_final=False,
                         )
 
@@ -661,13 +694,14 @@ Use these tools when you need more context about what was discussed in the chann
                         f"{event.output_tokens} out, ${event.cost_usd:.4f}"
                     )
 
-            # Send final response
+            # Send final response (with tool details hidden)
             await self._update_response_message(
                 client=client,
                 channel_id=channel_id,
                 message_ts=thinking_msg_ts,
                 text=response_text,
-                tool_calls=tool_calls,
+                active_tools={},  # No active tools in final
+                completed_tool_names=completed_tool_names,
                 is_final=True,
             )
 
@@ -693,7 +727,8 @@ Use these tools when you need more context about what was discussed in the chann
         channel_id: str,
         message_ts: Optional[str],
         text: str,
-        tool_calls: List[str],
+        active_tools: Dict[str, Dict[str, Any]],
+        completed_tool_names: List[str],
         is_final: bool,
     ):
         """Update the response message in Slack.
@@ -703,11 +738,12 @@ Use these tools when you need more context about what was discussed in the chann
             channel_id: Channel ID
             message_ts: Message timestamp to update (None to post new)
             text: Response text
-            tool_calls: List of tool calls made
+            active_tools: Currently executing tools with details
+            completed_tool_names: Names of completed tools (for final summary)
             is_final: Whether this is the final update
         """
         # Format the message
-        formatted_text = self._format_response(text, tool_calls, is_final)
+        formatted_text = self._format_response(text, active_tools, completed_tool_names, is_final)
 
         # Chunk if too long
         chunks = self._chunk_message(formatted_text)
@@ -746,14 +782,19 @@ Use these tools when you need more context about what was discussed in the chann
     def _format_response(
         self,
         text: str,
-        tool_calls: Optional[List[str]] = None,
+        active_tools: Optional[Dict[str, Dict[str, Any]]] = None,
+        completed_tool_names: Optional[List[str]] = None,
         is_final: bool = True,
     ) -> str:
         """Format response text for Slack.
 
+        During streaming: shows detailed tool information (name, args, status)
+        After completion: hides tool details, shows only compact summary
+
         Args:
             text: Response text
-            tool_calls: List of tool calls made
+            active_tools: Currently executing tools with details
+            completed_tool_names: Names of completed tools
             is_final: Whether this is the final response
 
         Returns:
@@ -761,10 +802,38 @@ Use these tools when you need more context about what was discussed in the chann
         """
         parts = []
 
-        # Add tool calls summary if any
-        if tool_calls and self.slack_config.show_tool_calls:
-            parts.append(" ".join(tool_calls))
-            parts.append("")
+        if not is_final and self.slack_config.show_tool_calls:
+            # STREAMING: Show detailed tool information
+            tool_lines = []
+
+            # Show completed tools (compact)
+            if completed_tool_names:
+                for name in completed_tool_names:
+                    tool_lines.append(f"✅ `{name}`")
+
+            # Show active tools with details
+            if active_tools and self.slack_config.show_tool_details:
+                for tool_id, tool_info in active_tools.items():
+                    name = tool_info["name"]
+                    args = tool_info.get("args", {})
+
+                    # Format args preview (truncate long values)
+                    args_preview = self._format_tool_args(args)
+                    if args_preview:
+                        tool_lines.append(f"🔧 `{name}` {args_preview}")
+                    else:
+                        tool_lines.append(f"🔧 `{name}` ⏳")
+            elif active_tools:
+                # Show just tool names without details
+                for tool_id, tool_info in active_tools.items():
+                    tool_lines.append(f"🔧 `{tool_info['name']}` ⏳")
+
+            if tool_lines:
+                parts.append("\n".join(tool_lines))
+                parts.append("")
+
+        # FINAL: Don't show any tool information (keep message clean)
+        # The tool calls were visible during streaming, now we hide them
 
         # Add response text
         if text:
@@ -777,6 +846,57 @@ Use these tools when you need more context about what was discussed in the chann
             parts.append("\n_Still typing..._")
 
         return "\n".join(parts)
+
+    def _format_tool_args(self, args: Dict[str, Any], max_length: int = 60) -> str:
+        """Format tool arguments for display.
+
+        Args:
+            args: Tool arguments dictionary
+            max_length: Maximum length for the preview
+
+        Returns:
+            Formatted args preview string
+        """
+        if not args:
+            return ""
+
+        # Special formatting for common tool types
+        if "pattern" in args:
+            # Grep/Glob tool
+            preview = f"pattern=`{args['pattern']}`"
+            if "path" in args:
+                preview += f" in `{args['path']}`"
+            return preview
+        elif "file_path" in args:
+            # Read/Write/Edit tool
+            path = args["file_path"]
+            if len(path) > 40:
+                path = "..." + path[-37:]
+            return f"`{path}`"
+        elif "command" in args:
+            # Bash tool
+            cmd = args["command"]
+            if len(cmd) > 50:
+                cmd = cmd[:47] + "..."
+            return f"`{cmd}`"
+        elif "query" in args:
+            # Search tool
+            query = args["query"]
+            if len(query) > 50:
+                query = query[:47] + "..."
+            return f"`{query}`"
+        elif "url" in args:
+            # WebFetch tool
+            return f"`{args['url'][:50]}...`" if len(args.get("url", "")) > 50 else f"`{args.get('url', '')}`"
+
+        # Generic: show first key-value pair
+        for key, value in args.items():
+            val_str = str(value)
+            if len(val_str) > 40:
+                val_str = val_str[:37] + "..."
+            return f"{key}=`{val_str}`"
+
+        return ""
 
     def _chunk_message(self, text: str) -> List[str]:
         """Split message into chunks that fit Slack's limits.
