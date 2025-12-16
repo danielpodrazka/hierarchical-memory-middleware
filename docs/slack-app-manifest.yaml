@@ -1,0 +1,81 @@
+# Slack App Manifest for HMM Bot
+#
+# Use this to quickly create a Slack app with the correct configuration:
+# 1. Go to https://api.slack.com/apps
+# 2. Click "Create New App" -> "From an app manifest"
+# 3. Select your workspace
+# 4. Paste this YAML (or convert to JSON)
+# 5. Review and create
+#
+# After creation, you still need to:
+# 1. Install the app to your workspace (OAuth & Permissions -> Install)
+# 2. Copy the Bot Token (xoxb-...)
+# 3. Create an App-Level Token with connections:write scope (Basic Info -> App-Level Tokens)
+# 4. Copy the App Token (xapp-...)
+
+display_information:
+  name: HMM Bot
+  description: Claude-powered AI assistant with persistent memory
+  background_color: "#4A154B"
+  long_description: |
+    HMM Bot is an AI assistant powered by Claude that remembers your conversations.
+
+    Features:
+    - Direct message support
+    - @mention in channels
+    - /hmm slash command
+    - Persistent memory per channel/DM
+    - Full Claude Code capabilities (file operations, bash, git, etc.)
+
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+
+  bot_user:
+    display_name: HMM Bot
+    always_online: true
+
+  slash_commands:
+    - command: /hmm
+      description: Ask the HMM AI assistant
+      usage_hint: "[question or command]"
+      should_escape: false
+
+oauth_config:
+  scopes:
+    bot:
+      # Read @mentions
+      - app_mentions:read
+      # Send messages
+      - chat:write
+      # Direct messages
+      - im:history
+      - im:read
+      - im:write
+      # Channel context (for thread history)
+      - channels:history
+      # Multi-person DMs (optional)
+      - mpim:history
+      - mpim:read
+      - mpim:write
+      # Commands
+      - commands
+
+settings:
+  event_subscriptions:
+    bot_events:
+      # @mentions in channels
+      - app_mention
+      # Direct messages
+      - message.im
+      # Multi-person DMs
+      - message.mpim
+
+  interactivity:
+    is_enabled: false
+
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
