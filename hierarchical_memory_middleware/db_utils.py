@@ -145,6 +145,59 @@ def _run_migrations(conn: duckdb.DuckDBPyConnection) -> None:
         logger.debug(f"system_prompt migration failed: {e}")
         pass
 
+    # Migration 4: Fix token_usage table to have auto-incrementing id
+    try:
+        tables = conn.execute("SHOW TABLES").fetchall()
+        table_names = [table[0] for table in tables]
+
+        if 'token_usage' in table_names:
+            # Check if the sequence exists
+            try:
+                conn.execute("SELECT nextval('token_usage_seq')")
+                logger.debug("token_usage_seq already exists")
+            except Exception:
+                # Sequence doesn't exist, we need to recreate the table
+                logger.debug("Recreating token_usage table with auto-increment...")
+                # Get existing data
+                existing_data = conn.execute("SELECT * FROM token_usage").fetchall()
+                # Drop old table
+                conn.execute("DROP TABLE token_usage")
+                # Create sequence and new table
+                conn.execute("CREATE SEQUENCE IF NOT EXISTS token_usage_seq")
+                conn.execute("""
+                    CREATE TABLE token_usage (
+                        id INTEGER PRIMARY KEY DEFAULT nextval('token_usage_seq'),
+                        conversation_id TEXT NOT NULL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        input_tokens INTEGER,
+                        output_tokens INTEGER,
+                        cache_read_tokens INTEGER,
+                        cache_creation_tokens INTEGER,
+                        total_tokens INTEGER,
+                        cost_usd FLOAT,
+                        duration_ms INTEGER,
+                        model TEXT,
+                        FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                    )
+                """)
+                # Restore data if any existed
+                if existing_data:
+                    for row in existing_data:
+                        conn.execute("""
+                            INSERT INTO token_usage (id, conversation_id, timestamp,
+                                input_tokens, output_tokens, cache_read_tokens,
+                                cache_creation_tokens, total_tokens, cost_usd, duration_ms, model)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, row)
+                    # Update sequence to be after max id
+                    max_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM token_usage").fetchone()[0]
+                    for _ in range(max_id):
+                        conn.execute("SELECT nextval('token_usage_seq')")
+                logger.debug("token_usage table recreated with auto-increment")
+    except Exception as e:
+        logger.debug(f"token_usage migration failed: {e}")
+        pass
+
     logger.debug("Database migrations completed")
 
 
@@ -216,8 +269,9 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
 
     # Create token usage table for tracking API costs
     conn.execute("""
+        CREATE SEQUENCE IF NOT EXISTS token_usage_seq;
         CREATE TABLE IF NOT EXISTS token_usage (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY DEFAULT nextval('token_usage_seq'),
             conversation_id TEXT NOT NULL,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             input_tokens INTEGER,
