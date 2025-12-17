@@ -202,6 +202,7 @@ The Slack bot includes additional MCP tools that Claude can use to interact with
 | `get_slack_file_info` | Get file metadata | `files:read` |
 | `download_slack_file` | Download files to `slack_files/` | `files:read` |
 | `create_slack_channel` | Create new public or private channels | `channels:manage` / `groups:write` |
+| `send_slack_dm` | Send a direct message to a user | `im:write` |
 
 ### Examples
 
@@ -213,6 +214,9 @@ The Slack bot includes additional MCP tools that Claude can use to interact with
 
 **Download a shared file:**
 > "Download that screenshot Alice shared and analyze it"
+
+**Send a DM to someone:**
+> "Send a direct message to @alice letting her know the deployment is complete"
 
 ## Memory Management
 

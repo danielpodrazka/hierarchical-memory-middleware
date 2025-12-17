@@ -567,6 +567,104 @@ def create_slack_memory_server(
             return {"error": str(e)}
 
     @mcp.tool()
+    async def send_slack_dm(
+        user_id: str,
+        message: str,
+        thread_ts: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send a direct message to a Slack user.
+
+        Use this tool to send private messages to users. This opens a DM
+        conversation with the user and sends the message.
+
+        Args:
+            user_id: The Slack user ID to message (e.g., U01234567)
+            message: The message text to send (supports Slack mrkdwn formatting)
+            thread_ts: Optional thread timestamp to reply in a thread
+
+        Returns:
+            Message info including channel ID and timestamp
+        """
+        try:
+            import httpx
+
+            if not message or not message.strip():
+                return {"error": "Message text is required"}
+
+            if not user_id or not user_id.startswith("U"):
+                return {"error": "Invalid user ID format. Expected format: U01234567"}
+
+            async with httpx.AsyncClient() as client:
+                # First, open a DM conversation with the user
+                open_response = await client.post(
+                    "https://slack.com/api/conversations.open",
+                    json={"users": user_id},
+                    headers={
+                        "Authorization": f"Bearer {slack_bot_token}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=10.0,
+                )
+                open_data = open_response.json()
+
+                if not open_data.get("ok"):
+                    error = open_data.get("error", "Unknown error")
+                    error_messages = {
+                        "user_not_found": f"User '{user_id}' not found",
+                        "user_not_visible": "User is not visible to the bot",
+                        "cannot_dm_bot": "Cannot send DM to a bot user",
+                        "missing_scope": "Bot token needs im:write scope to send DMs",
+                    }
+                    return {"error": error_messages.get(error, f"Slack API error: {error}")}
+
+                dm_channel_id = open_data.get("channel", {}).get("id")
+                if not dm_channel_id:
+                    return {"error": "Failed to open DM conversation"}
+
+                # Now send the message
+                payload = {
+                    "channel": dm_channel_id,
+                    "text": message,
+                }
+                if thread_ts:
+                    payload["thread_ts"] = thread_ts
+
+                msg_response = await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {slack_bot_token}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=10.0,
+                )
+                msg_data = msg_response.json()
+
+                if not msg_data.get("ok"):
+                    error = msg_data.get("error", "Unknown error")
+                    error_messages = {
+                        "channel_not_found": "DM channel not found",
+                        "msg_too_long": "Message is too long (max ~40,000 chars)",
+                        "no_text": "Message text is required",
+                        "rate_limited": "Rate limited - try again later",
+                    }
+                    return {"error": error_messages.get(error, f"Slack API error: {error}")}
+
+                return {
+                    "success": True,
+                    "user_id": user_id,
+                    "channel_id": dm_channel_id,
+                    "message_ts": msg_data.get("ts"),
+                    "message_sent": True,
+                }
+
+        except ImportError:
+            return {"error": "httpx not installed. Install with: pip install httpx"}
+        except Exception as e:
+            logger.error(f"Error sending Slack DM: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
     async def get_slack_file_info(
         file_id: str,
     ) -> Dict[str, Any]:
