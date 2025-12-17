@@ -156,6 +156,10 @@ class SlackHMMBot:
         # Track active response tasks (for cancellation)
         self._active_tasks: Dict[str, asyncio.Task] = {}
 
+        # Track streaming state for each active task (for stop/interrupt functionality)
+        # task_key -> {"response_text": str, "message_ts": str, "chunk_message_ts": list, "client": AsyncWebClient, "channel_id": str}
+        self._streaming_state: Dict[str, Dict[str, Any]] = {}
+
         # Message batching: accumulate rapid messages before processing
         self._pending_messages: Dict[str, List[Dict[str, Any]]] = {}  # task_key -> list of message data
         self._batch_timers: Dict[str, asyncio.Task] = {}  # task_key -> debounce timer task
@@ -362,6 +366,14 @@ Use these tools when you need more context about what was discussed in the chann
         thread_ts = event.get("thread_ts") or event.get("ts")
         files = event.get("files", [])
 
+        # Check for "stop" command to interrupt active response
+        if text.strip().lower() == "stop":
+            stopped = await self._handle_stop_command(channel_id, thread_ts, client)
+            if stopped:
+                logger.info(f"User stopped active response in {channel_id}")
+                return
+            # If no active task, fall through and treat as regular message
+
         # Build message text including file descriptions
         message_parts = []
         if text.strip():
@@ -410,6 +422,14 @@ Use these tools when you need more context about what was discussed in the chann
         # Remove the @mention from the text
         if self._bot_user_id:
             text = text.replace(f"<@{self._bot_user_id}>", "").strip()
+
+        # Check for "stop" command to interrupt active response
+        if text.lower() == "stop":
+            stopped = await self._handle_stop_command(channel_id, thread_ts, client)
+            if stopped:
+                logger.info(f"User stopped active response in {channel_id}")
+                return
+            # If no active task, fall through and treat as regular message
 
         # Build message text including file descriptions
         message_parts = []
@@ -610,6 +630,7 @@ Use these tools when you need more context about what was discussed in the chann
                 thinking_msg_ts=thinking_msg,
                 client=client,
                 recent_context=recent_context,
+                task_key=task_key,
             )
         )
         self._active_tasks[task_key] = task
@@ -620,11 +641,81 @@ Use these tools when you need more context about what was discussed in the chann
             logger.info(f"Task cancelled for {task_key}")
         finally:
             self._active_tasks.pop(task_key, None)
+            self._streaming_state.pop(task_key, None)
 
             # Check if there are more pending messages that arrived while we were processing
             if task_key in self._pending_messages and self._pending_messages[task_key]:
                 logger.info(f"Processing {len(self._pending_messages[task_key])} queued messages for {task_key}")
                 await self._process_batched_messages(channel_id, thread_ts, task_key)
+
+    async def _handle_stop_command(
+        self,
+        channel_id: str,
+        thread_ts: str,
+        client: AsyncWebClient,
+    ) -> bool:
+        """Handle "stop" command to interrupt an active response.
+
+        Args:
+            channel_id: Slack channel ID
+            thread_ts: Thread timestamp
+            client: Slack web client
+
+        Returns:
+            True if a task was stopped, False if no active task found
+        """
+        task_key = f"{channel_id}:{thread_ts}"
+
+        if task_key not in self._active_tasks:
+            return False
+
+        task = self._active_tasks[task_key]
+        state = self._streaming_state.get(task_key, {})
+
+        logger.info(f"Stopping active task for {task_key}")
+
+        # Cancel the task
+        task.cancel()
+
+        # Get the partial response and conversation manager
+        response_text = state.get("response_text", "")
+        message_ts = state.get("message_ts")
+        chunk_message_ts = state.get("chunk_message_ts", [])
+        conv_key = f"{channel_id}:{thread_ts}" if thread_ts else channel_id
+        manager = self._conversations.get(conv_key)
+
+        # Save the partial response to memory
+        if manager:
+            try:
+                await manager.save_partial_response(response_text)
+                logger.info(f"Saved partial response ({len(response_text)} chars) for {task_key}")
+            except Exception as e:
+                logger.warning(f"Failed to save partial response: {e}")
+
+        # Update the Slack message to indicate interruption
+        if message_ts:
+            interrupted_text = response_text
+            if interrupted_text:
+                interrupted_text += "\n\n_⏹️ Response stopped by user_"
+            else:
+                interrupted_text = "_⏹️ Response stopped by user before any output_"
+
+            try:
+                await client.chat_update(
+                    channel=channel_id,
+                    ts=message_ts,
+                    text=interrupted_text,
+                )
+                # Delete any chunk messages
+                for chunk_ts in chunk_message_ts:
+                    try:
+                        await client.chat_delete(channel=channel_id, ts=chunk_ts)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"Failed to update message after stop: {e}")
+
+        return True
 
     async def _generate_response(
         self,
@@ -635,6 +726,7 @@ Use these tools when you need more context about what was discussed in the chann
         thinking_msg_ts: Optional[str],
         client: AsyncWebClient,
         recent_context: Optional[List[Dict[str, Any]]] = None,
+        task_key: Optional[str] = None,
     ):
         """Generate and stream response to Slack.
 
@@ -646,9 +738,20 @@ Use these tools when you need more context about what was discussed in the chann
             thinking_msg_ts: Timestamp of "thinking" message to update
             client: Slack web client
             recent_context: Recent messages from the channel (for context)
+            task_key: Key for tracking this task's streaming state
         """
         # Get conversation manager
         manager = await self._get_or_create_conversation(channel_id, thread_ts)
+
+        # Initialize streaming state for stop command support
+        if task_key:
+            self._streaming_state[task_key] = {
+                "response_text": "",
+                "message_ts": thinking_msg_ts,
+                "chunk_message_ts": [],
+                "client": client,
+                "channel_id": channel_id,
+            }
 
         # Build message with context if available
         if recent_context:
@@ -679,6 +782,10 @@ Use these tools when you need more context about what was discussed in the chann
                 if isinstance(event, str):
                     response_text += event
 
+                    # Update streaming state for stop command support
+                    if task_key and task_key in self._streaming_state:
+                        self._streaming_state[task_key]["response_text"] = response_text
+
                     # Update message periodically (to show streaming progress)
                     now = datetime.now()
                     if (now - last_update).total_seconds() >= self.slack_config.update_interval_seconds:
@@ -693,6 +800,9 @@ Use these tools when you need more context about what was discussed in the chann
                             is_final=False,
                             chunk_message_ts=chunk_message_ts,
                         )
+                        # Update streaming state with chunk timestamps
+                        if task_key and task_key in self._streaming_state:
+                            self._streaming_state[task_key]["chunk_message_ts"] = chunk_message_ts
                         last_update = now
 
                 elif isinstance(event, ToolCallEvent):

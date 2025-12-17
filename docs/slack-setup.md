@@ -124,6 +124,18 @@ In any channel where the bot is added, @mention it:
 /hmm How do I set up a virtual environment?
 ```
 
+### Stopping a Response
+If the bot is generating a long response and you want to interrupt it, simply type:
+```
+stop
+```
+This will:
+- Cancel the in-progress response
+- Save the partial response to conversation memory
+- Update the message to show it was stopped
+
+This works in DMs, @mentions (e.g., `@HMM Bot stop`), and threads.
+
 ### Special Commands (via /hmm)
 - `/hmm stats` - Show conversation statistics and memory usage
 - `/hmm clear` - Clear conversation memory
