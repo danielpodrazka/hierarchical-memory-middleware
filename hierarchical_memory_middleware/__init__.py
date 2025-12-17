@@ -26,6 +26,7 @@ from .middleware import create_conversation_manager
 from .storage import DuckDBStorage
 from .compression import SimpleCompressor, CompressionManager
 from .model_manager import ModelManager, ClaudeAgentSDKMarker
+from .conversation_db_manager import ConversationDBManager
 from .models import (
     ConversationNode,
     ConversationState,
@@ -63,6 +64,7 @@ __all__ = [
     "HierarchicalConversationManager",
     "ClaudeAgentSDKConversationManager",
     "create_conversation_manager",  # Factory function (recommended)
+    "ConversationDBManager",  # Per-conversation DuckDB manager for Slack
     # Storage
     "DuckDBStorage",
     # Compression

@@ -20,12 +20,13 @@ Usage:
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import signal
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 
@@ -70,6 +71,7 @@ from .middleware.claude_agent_sdk_manager import (
     UsageEvent,
     SlackMCPConfig,
 )
+from .conversation_db_manager import ConversationDBManager
 
 
 @dataclass
@@ -175,6 +177,14 @@ class SlackHMMBot:
         # Get model config for conversation managers
         self._model_config = ModelManager.get_model_config(self.hmm_config.work_model)
 
+        # Per-conversation DB manager for concurrent access
+        self._db_manager = ConversationDBManager(
+            main_db_path=self.hmm_config.db_path,
+            active_dir=None,  # Uses default: alongside main DB
+            idle_timeout=timedelta(minutes=5),
+            cleanup_interval=timedelta(minutes=1),
+        )
+
         # Setup event handlers
         self._setup_handlers()
 
@@ -213,6 +223,15 @@ class SlackHMMBot:
         """
         # Use channel + thread as unique key (so threads have their own memory)
         conv_key = f"{channel_id}:{thread_ts}" if thread_ts else channel_id
+
+        # Check if existing conversation's storage was synced back and closed (idle timeout)
+        # If so, we need to recreate with fresh storage
+        if conv_key in self._conversations:
+            conv_id = hashlib.sha256(conv_key.encode()).hexdigest()[:36]
+            if not self._db_manager.is_active(conv_id):
+                # Storage was synced back due to idle timeout - remove stale manager
+                logger.info(f"Conversation {conv_key} storage was synced back, recreating with fresh storage")
+                del self._conversations[conv_key]
 
         if conv_key not in self._conversations:
             # Create new conversation manager
@@ -263,9 +282,17 @@ Use these tools when you need more context about what was discussed in the chann
                 working_dir=self.working_dir,
             )
 
+            # Generate deterministic conversation ID based on channel/thread
+            # This allows persistent memory across bot restarts
+            conv_id = hashlib.sha256(conv_key.encode()).hexdigest()[:36]
+
+            # Get isolated storage for this conversation (per-conversation DuckDB)
+            storage = await self._db_manager.get_storage(conv_id)
+
             manager = ClaudeAgentSDKConversationManager(
                 config=self.hmm_config,
                 model_config=model_config,
+                storage=storage,  # Use per-conversation isolated storage
                 permission_mode=self.permission_mode,
                 enable_memory_tools=True,
                 agentic_mode=False,  # Slack is interactive, not agentic
@@ -273,15 +300,15 @@ Use these tools when you need more context about what was discussed in the chann
                 slack_mcp_config=slack_mcp_config,
             )
 
-            # Start conversation with deterministic ID based on channel/thread
-            # This allows persistent memory across bot restarts
-            import hashlib
-            conv_id = hashlib.sha256(conv_key.encode()).hexdigest()[:36]
+            # Start conversation with the same ID used for storage
             await manager.start_conversation(conversation_id=conv_id)
+
+            # Mark storage as dirty since we just started/activated it
+            self._db_manager.mark_dirty(conv_id)
 
             self._conversations[conv_key] = manager
             self._conversation_channels[conv_key] = channel_id
-            logger.info(f"Created new conversation for {conv_key}")
+            logger.info(f"Created new conversation for {conv_key} (conv_id: {conv_id})")
 
         return self._conversations[conv_key]
 
@@ -814,6 +841,10 @@ Use these tools when you need more context about what was discussed in the chann
                 chunk_message_ts=chunk_message_ts,
             )
 
+            # Mark storage as dirty (conversation nodes were saved)
+            if manager.conversation_id:
+                self._db_manager.mark_dirty(manager.conversation_id)
+
         except Exception as e:
             logger.exception(f"Error generating response: {e}")
             error_text = f"❌ Sorry, I encountered an error: {str(e)}"
@@ -1256,6 +1287,11 @@ Use these tools when you need more context about what was discussed in the chann
         """Start the Slack bot."""
         logger.info("Starting SlackHMMBot...")
 
+        # Run startup healing for orphaned conversation files
+        merged_count = await self._db_manager.startup()
+        if merged_count > 0:
+            logger.info(f"Healed {merged_count} orphaned conversation files from previous shutdown")
+
         # Get bot user ID
         try:
             auth_result = await self.app.client.auth_test()
@@ -1273,6 +1309,8 @@ Use these tools when you need more context about what was discussed in the chann
         print("   - DM me directly")
         print("   - @mention me in channels")
         print("   - Use /hmm <question> command")
+        print(f"   - Database: {self.hmm_config.db_path}")
+        print(f"   - Active conversations dir: {self._db_manager.active_dir}")
         print("\nPress Ctrl+C to stop.")
 
         await handler.start_async()
@@ -1289,14 +1327,20 @@ Use these tools when you need more context about what was discussed in the chann
         for task in self._active_tasks.values():
             task.cancel()
 
-        # Close conversation managers
+        # Close conversation managers (but don't close their storage - DB manager handles that)
         for manager in self._conversations.values():
+            # Don't close storage via manager - the DB manager will handle sync-back
+            manager.storage = None  # Prevent manager from closing shared storage
             await manager.close()
 
         self._conversations.clear()
         self._active_tasks.clear()
         self._batch_timers.clear()
         self._pending_messages.clear()
+
+        # Shutdown DB manager - this syncs all active conversations back to main DB
+        logger.info("Syncing active conversations to main database...")
+        await self._db_manager.shutdown()
 
         logger.info("SlackHMMBot shut down complete")
 

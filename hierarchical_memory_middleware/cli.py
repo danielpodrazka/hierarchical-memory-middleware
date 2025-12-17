@@ -1421,10 +1421,10 @@ async def _chat_session(
                 if not agentic:
                     yielded_to_human = True
 
-                # If interrupted in non-agentic mode, exit after saving partial response
-                if interrupted and not agentic:
-                    console.print("[dim]✓ Partial response saved. Exiting...[/dim]")
-                    break
+                # If interrupted, reset the flag and continue the chat loop
+                if interrupted:
+                    interrupted = False
+                    yielded_to_human = True  # Wait for user input after interruption
 
             except KeyboardInterrupt:
                 # Signal handler already printed message and set flags
