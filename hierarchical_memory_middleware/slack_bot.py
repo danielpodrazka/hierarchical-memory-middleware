@@ -671,6 +671,8 @@ Use these tools when you need more context about what was discussed in the chann
         completed_tool_names: List[str] = []  # Just tool names for final message
         completed_tools: List[Dict[str, Any]] = []  # Full tool info for verbose mode
         last_update = datetime.now()
+        # Track additional message timestamps for chunked messages (for updates)
+        chunk_message_ts: List[str] = []
 
         try:
             async for event in manager.chat_stream(full_text, include_tool_events=True):
@@ -680,7 +682,7 @@ Use these tools when you need more context about what was discussed in the chann
                     # Update message periodically (to show streaming progress)
                     now = datetime.now()
                     if (now - last_update).total_seconds() >= self.slack_config.update_interval_seconds:
-                        await self._update_response_message(
+                        chunk_message_ts = await self._update_response_message(
                             client=client,
                             channel_id=channel_id,
                             message_ts=thinking_msg_ts,
@@ -689,6 +691,7 @@ Use these tools when you need more context about what was discussed in the chann
                             completed_tool_names=completed_tool_names,
                             completed_tools=completed_tools,
                             is_final=False,
+                            chunk_message_ts=chunk_message_ts,
                         )
                         last_update = now
 
@@ -702,7 +705,7 @@ Use these tools when you need more context about what was discussed in the chann
                             "is_error": False,
                         }
                         # Update to show tool usage
-                        await self._update_response_message(
+                        chunk_message_ts = await self._update_response_message(
                             client=client,
                             channel_id=channel_id,
                             message_ts=thinking_msg_ts,
@@ -711,6 +714,7 @@ Use these tools when you need more context about what was discussed in the chann
                             completed_tool_names=completed_tool_names,
                             completed_tools=completed_tools,
                             is_final=False,
+                            chunk_message_ts=chunk_message_ts,
                         )
 
                 elif isinstance(event, ToolResultEvent):
@@ -725,7 +729,7 @@ Use these tools when you need more context about what was discussed in the chann
                             completed_tools.append(tool_info.copy())
                             del active_tool_calls[event.tool_id]
                         # Update to show tool result
-                        await self._update_response_message(
+                        chunk_message_ts = await self._update_response_message(
                             client=client,
                             channel_id=channel_id,
                             message_ts=thinking_msg_ts,
@@ -734,6 +738,7 @@ Use these tools when you need more context about what was discussed in the chann
                             completed_tool_names=completed_tool_names,
                             completed_tools=completed_tools,
                             is_final=False,
+                            chunk_message_ts=chunk_message_ts,
                         )
 
                 elif isinstance(event, UsageEvent):
@@ -753,6 +758,7 @@ Use these tools when you need more context about what was discussed in the chann
                 completed_tool_names=completed_tool_names,
                 completed_tools=completed_tools,
                 is_final=True,
+                chunk_message_ts=chunk_message_ts,
             )
 
         except Exception as e:
@@ -781,7 +787,8 @@ Use these tools when you need more context about what was discussed in the chann
         completed_tool_names: List[str],
         is_final: bool,
         completed_tools: Optional[List[Dict[str, Any]]] = None,
-    ):
+        chunk_message_ts: Optional[List[str]] = None,
+    ) -> List[str]:
         """Update the response message in Slack.
 
         Args:
@@ -793,7 +800,14 @@ Use these tools when you need more context about what was discussed in the chann
             completed_tool_names: Names of completed tools (for final summary)
             is_final: Whether this is the final update
             completed_tools: Full tool info (args + results) for verbose mode
+            chunk_message_ts: Timestamps of additional chunk messages (for updates)
+
+        Returns:
+            Updated list of chunk message timestamps
         """
+        if chunk_message_ts is None:
+            chunk_message_ts = []
+
         # Format the message
         formatted_text = self._format_response(text, active_tools, completed_tool_names, is_final, completed_tools)
 
@@ -802,34 +816,68 @@ Use these tools when you need more context about what was discussed in the chann
 
         try:
             if message_ts and len(chunks) == 1:
-                # Update existing message
+                # Single chunk - update existing message, delete any extra chunk messages
                 await client.chat_update(
                     channel=channel_id,
                     ts=message_ts,
                     text=chunks[0],
                 )
+                # Delete any previous chunk messages that are no longer needed
+                for old_ts in chunk_message_ts:
+                    try:
+                        await client.chat_delete(channel=channel_id, ts=old_ts)
+                    except Exception:
+                        pass  # Ignore errors deleting old messages
+                return []  # No more chunk messages
+
             elif message_ts:
-                # First chunk updates, rest are new messages
+                # Multiple chunks - update first, then update/create additional chunks
                 await client.chat_update(
                     channel=channel_id,
                     ts=message_ts,
                     text=chunks[0],
                 )
-                for chunk in chunks[1:]:
-                    await client.chat_postMessage(
-                        channel=channel_id,
-                        text=chunk,
-                        thread_ts=message_ts,  # Reply in thread
-                    )
+
+                new_chunk_ts = []
+                for i, chunk in enumerate(chunks[1:]):
+                    if i < len(chunk_message_ts):
+                        # Update existing chunk message
+                        await client.chat_update(
+                            channel=channel_id,
+                            ts=chunk_message_ts[i],
+                            text=chunk,
+                        )
+                        new_chunk_ts.append(chunk_message_ts[i])
+                    else:
+                        # Post new chunk message
+                        result = await client.chat_postMessage(
+                            channel=channel_id,
+                            text=chunk,
+                            thread_ts=message_ts,  # Reply in thread
+                        )
+                        new_chunk_ts.append(result["ts"])
+
+                # Delete any extra old chunk messages that are no longer needed
+                for old_ts in chunk_message_ts[len(chunks) - 1:]:
+                    try:
+                        await client.chat_delete(channel=channel_id, ts=old_ts)
+                    except Exception:
+                        pass  # Ignore errors deleting old messages
+
+                return new_chunk_ts
+
             else:
-                # Post new messages
+                # Post new messages (no existing message to update)
                 for chunk in chunks:
                     await client.chat_postMessage(
                         channel=channel_id,
                         text=chunk,
                     )
+                return []
+
         except Exception as e:
             logger.exception(f"Error updating Slack message: {e}")
+            return chunk_message_ts  # Return unchanged on error
 
     def _format_response(
         self,
