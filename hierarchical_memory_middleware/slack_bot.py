@@ -285,61 +285,6 @@ Use these tools when you need more context about what was discussed in the chann
 
         return self._conversations[conv_key]
 
-    async def _get_recent_messages(
-        self,
-        client: AsyncWebClient,
-        channel_id: str,
-        before_ts: Optional[str] = None,
-        limit: int = 2,
-    ) -> List[Dict[str, Any]]:
-        """Fetch recent messages from a channel.
-
-        Args:
-            client: Slack web client
-            channel_id: Channel to fetch from
-            before_ts: Fetch messages before this timestamp (exclusive)
-            limit: Maximum number of messages to return
-
-        Returns:
-            List of message dicts with 'user', 'text', 'ts' keys
-        """
-        try:
-            # Fetch channel history
-            kwargs = {
-                "channel": channel_id,
-                "limit": limit + 1,  # Fetch one extra to exclude current message
-            }
-            if before_ts:
-                kwargs["latest"] = before_ts
-                kwargs["inclusive"] = False  # Don't include the message at latest
-
-            result = await client.conversations_history(**kwargs)
-            messages = result.get("messages", [])
-
-            # Filter out bot messages and the current message
-            filtered = []
-            for msg in messages:
-                # Skip bot messages
-                if msg.get("bot_id") or msg.get("subtype"):
-                    continue
-                # Skip the triggering message itself
-                if before_ts and msg.get("ts") == before_ts:
-                    continue
-                filtered.append({
-                    "user": msg.get("user", "unknown"),
-                    "text": msg.get("text", ""),
-                    "ts": msg.get("ts"),
-                })
-                if len(filtered) >= limit:
-                    break
-
-            # Return in chronological order (oldest first)
-            return list(reversed(filtered))
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch recent messages: {e}")
-            return []
-
     async def _handle_message_event(
         self, event: dict, say: Callable, client: AsyncWebClient
     ):
@@ -391,14 +336,6 @@ Use these tools when you need more context about what was discussed in the chann
 
         text = "\n\n".join(message_parts)
 
-        # Fetch recent channel context (last 2 messages before this one)
-        recent_context = await self._get_recent_messages(
-            client=client,
-            channel_id=channel_id,
-            before_ts=event.get("ts"),
-            limit=2,
-        )
-
         await self._process_message(
             channel_id=channel_id,
             user_id=user_id,
@@ -406,7 +343,6 @@ Use these tools when you need more context about what was discussed in the chann
             thread_ts=thread_ts,
             say=say,
             client=client,
-            recent_context=recent_context,
         )
 
     async def _handle_mention_event(
@@ -451,14 +387,6 @@ Use these tools when you need more context about what was discussed in the chann
 
         text = "\n\n".join(message_parts)
 
-        # Fetch recent channel context (last 2 messages before this one)
-        recent_context = await self._get_recent_messages(
-            client=client,
-            channel_id=channel_id,
-            before_ts=event.get("ts"),
-            limit=2,
-        )
-
         await self._process_message(
             channel_id=channel_id,
             user_id=user_id,
@@ -466,7 +394,6 @@ Use these tools when you need more context about what was discussed in the chann
             thread_ts=thread_ts,
             say=say,
             client=client,
-            recent_context=recent_context,
         )
 
     async def _handle_slash_command(self, command: dict, respond: Callable):
@@ -528,7 +455,6 @@ Use these tools when you need more context about what was discussed in the chann
         thread_ts: str,
         say: Callable,
         client: AsyncWebClient,
-        recent_context: Optional[List[Dict[str, Any]]] = None,
     ):
         """Process an incoming message and generate a response.
 
@@ -542,7 +468,6 @@ Use these tools when you need more context about what was discussed in the chann
             thread_ts: Thread timestamp for replies
             say: Slack say function
             client: Slack web client
-            recent_context: Recent messages from the channel (for context)
         """
         task_key = f"{channel_id}:{thread_ts}"
 
@@ -554,7 +479,6 @@ Use these tools when you need more context about what was discussed in the chann
             self._pending_messages[task_key].append({
                 "user_id": user_id,
                 "text": text,
-                "recent_context": recent_context,
                 "say": say,
                 "client": client,
             })
@@ -568,7 +492,6 @@ Use these tools when you need more context about what was discussed in the chann
         self._pending_messages[task_key].append({
             "user_id": user_id,
             "text": text,
-            "recent_context": recent_context,
             "say": say,
             "client": client,
         })
@@ -602,10 +525,8 @@ Use these tools when you need more context about what was discussed in the chann
         combined_texts = [msg["text"] for msg in messages]
         combined_text = "\n\n".join(combined_texts) if len(combined_texts) > 1 else combined_texts[0]
 
-        # Use the first message's context and the last message's say/client
-        first_msg = messages[0]
+        # Use the last message's say/client
         last_msg = messages[-1]
-        recent_context = first_msg.get("recent_context")
         say = last_msg["say"]
         client = last_msg["client"]
         user_id = last_msg["user_id"]
@@ -629,7 +550,6 @@ Use these tools when you need more context about what was discussed in the chann
                 thread_ts=thread_ts,
                 thinking_msg_ts=thinking_msg,
                 client=client,
-                recent_context=recent_context,
                 task_key=task_key,
             )
         )
@@ -756,7 +676,6 @@ Use these tools when you need more context about what was discussed in the chann
         thread_ts: str,
         thinking_msg_ts: Optional[str],
         client: AsyncWebClient,
-        recent_context: Optional[List[Dict[str, Any]]] = None,
         task_key: Optional[str] = None,
     ):
         """Generate and stream response to Slack.
@@ -768,7 +687,6 @@ Use these tools when you need more context about what was discussed in the chann
             thread_ts: Thread timestamp
             thinking_msg_ts: Timestamp of "thinking" message to update
             client: Slack web client
-            recent_context: Recent messages from the channel (for context)
             task_key: Key for tracking this task's streaming state
         """
         # Get conversation manager
@@ -784,20 +702,6 @@ Use these tools when you need more context about what was discussed in the chann
                 "channel_id": channel_id,
             }
 
-        # Build message with context if available
-        if recent_context:
-            context_lines = ["[Recent channel messages for context:]"]
-            for msg in recent_context:
-                user = msg.get("user", "unknown")
-                msg_text = msg.get("text", "")
-                context_lines.append(f"  <@{user}>: {msg_text}")
-            context_lines.append("")
-            context_lines.append("[Your message:]")
-            context_lines.append(text)
-            full_text = "\n".join(context_lines)
-        else:
-            full_text = text
-
         # Collect response
         response_text = ""
         # Track tool calls: {tool_id: {"name": str, "args": dict, "result": str, "is_error": bool}}
@@ -809,7 +713,7 @@ Use these tools when you need more context about what was discussed in the chann
         chunk_message_ts: List[str] = []
 
         try:
-            async for event in manager.chat_stream(full_text, include_tool_events=True):
+            async for event in manager.chat_stream(text, include_tool_events=True):
                 if isinstance(event, str):
                     response_text += event
 
