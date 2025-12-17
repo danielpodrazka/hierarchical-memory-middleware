@@ -594,10 +594,13 @@ class ClaudeAgentSDKConversationManager:
                                 yield block.text
                         elif isinstance(block, ToolUseBlock) and include_tool_events:
                             # Track and yield tool call
+                            # Use field names that match conversation_manager expectations
                             tool_call = {
-                                "tool_id": block.id,
+                                "tool_call_id": block.id,
+                                "tool_id": block.id,  # Keep for backward compatibility
                                 "tool_name": block.name,
-                                "tool_input": block.input,
+                                "args": block.input,
+                                "tool_input": block.input,  # Keep for backward compatibility
                             }
                             self._current_tool_calls.append(tool_call)
                             yield ToolCallEvent(
@@ -611,8 +614,10 @@ class ClaudeAgentSDKConversationManager:
                     for block in message.content:
                         if isinstance(block, ToolResultBlock):
                             # Track and yield tool result
+                            # Use field names that match conversation_manager expectations
                             tool_result = {
-                                "tool_id": block.tool_use_id,
+                                "tool_call_id": block.tool_use_id,
+                                "tool_id": block.tool_use_id,  # Keep for backward compatibility
                                 "content": block.content,
                                 "is_error": block.is_error,
                             }
@@ -719,7 +724,11 @@ class ClaudeAgentSDKConversationManager:
             # No conversation or user message to save
             return
 
-        logger.debug(f"Saving partial response ({len(partial_response)} chars)")
+        logger.debug(
+            f"Saving partial response ({len(partial_response)} chars), "
+            f"tool_calls={len(self._current_tool_calls)}, "
+            f"tool_results={len(self._current_tool_results)}"
+        )
 
         # Save the user message
         await self.storage.save_conversation_node(

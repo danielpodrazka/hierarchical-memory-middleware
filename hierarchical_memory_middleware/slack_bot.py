@@ -674,10 +674,17 @@ Use these tools when you need more context about what was discussed in the chann
 
         logger.info(f"Stopping active task for {task_key}")
 
-        # Cancel the task
+        # Cancel the task and wait for it to complete
         task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # Expected when cancelling
+        except Exception as e:
+            logger.warning(f"Error while cancelling task: {e}")
 
         # Get the partial response and conversation manager
+        # (streaming state should now be finalized after task cancellation)
         response_text = state.get("response_text", "")
         message_ts = state.get("message_ts")
         chunk_message_ts = state.get("chunk_message_ts", [])
@@ -685,17 +692,41 @@ Use these tools when you need more context about what was discussed in the chann
         manager = self._conversations.get(conv_key)
 
         # Save the partial response to memory
+        # The manager's _current_tool_calls will have all tool calls that were
+        # received before cancellation
         if manager:
             try:
+                # Log tool call state before saving
+                tool_calls_count = len(getattr(manager, '_current_tool_calls', []))
+                tool_results_count = len(getattr(manager, '_current_tool_results', []))
+                logger.info(
+                    f"Saving partial response for {task_key}: "
+                    f"{len(response_text)} chars, "
+                    f"{tool_calls_count} tool calls, "
+                    f"{tool_results_count} tool results"
+                )
                 await manager.save_partial_response(response_text)
-                logger.info(f"Saved partial response ({len(response_text)} chars) for {task_key}")
+                logger.info(f"Saved partial response for {task_key}")
             except Exception as e:
                 logger.warning(f"Failed to save partial response: {e}")
 
         # Update the Slack message to indicate interruption
         if message_ts:
-            interrupted_text = response_text
-            if interrupted_text:
+            # Get tool information from streaming state to preserve in final message
+            active_tool_calls = state.get("active_tool_calls", {})
+            completed_tools = state.get("completed_tools", [])
+            completed_tool_names = state.get("completed_tool_names", [])
+
+            # Format the response with tool information preserved
+            if response_text or completed_tools or active_tool_calls:
+                # Use _format_response to include tool information
+                interrupted_text = self._format_response(
+                    text=response_text,
+                    active_tools=active_tool_calls,
+                    completed_tool_names=completed_tool_names,
+                    is_final=True,
+                    completed_tools=completed_tools,
+                )
                 interrupted_text += "\n\n_⏹️ Response stopped by user_"
             else:
                 interrupted_text = "_⏹️ Response stopped by user before any output_"
@@ -814,6 +845,9 @@ Use these tools when you need more context about what was discussed in the chann
                             "result": None,
                             "is_error": False,
                         }
+                        # Update streaming state for stop command support
+                        if task_key and task_key in self._streaming_state:
+                            self._streaming_state[task_key]["active_tool_calls"] = active_tool_calls.copy()
                         # Update to show tool usage
                         chunk_message_ts = await self._update_response_message(
                             client=client,
@@ -838,6 +872,11 @@ Use these tools when you need more context about what was discussed in the chann
                             completed_tool_names.append(tool_info["name"])
                             completed_tools.append(tool_info.copy())
                             del active_tool_calls[event.tool_id]
+                        # Update streaming state for stop command support
+                        if task_key and task_key in self._streaming_state:
+                            self._streaming_state[task_key]["active_tool_calls"] = active_tool_calls.copy()
+                            self._streaming_state[task_key]["completed_tools"] = completed_tools.copy()
+                            self._streaming_state[task_key]["completed_tool_names"] = completed_tool_names.copy()
                         # Update to show tool result
                         chunk_message_ts = await self._update_response_message(
                             client=client,
