@@ -970,15 +970,16 @@ async def _chat_session(
                 sys.exit(0)
             last_sigint_time[0] = current_time
 
+            # Set interrupted flag - don't raise KeyboardInterrupt directly
+            # This allows the stream loop to complete gracefully and save partial response
+            interrupted = True
+            yielded_to_human = True
             if agentic:
-                interrupted = True
-                yielded_to_human = True
                 console.print(
                     "\n[yellow]⏸️  Interrupted - waiting for your input (Ctrl+C again to quit)[/yellow]"
                 )
             else:
-                console.print("\n[yellow]👋 Chat interrupted by user[/yellow]")
-                raise KeyboardInterrupt()
+                console.print("\n[yellow]⏸️  Interrupted - saving partial response... (Ctrl+C again to quit)[/yellow]")
 
         signal.signal(signal.SIGINT, handle_sigint_with_force_quit)
 
@@ -1005,12 +1006,15 @@ async def _chat_session(
                         )
                     except KeyboardInterrupt:
                         # Handle Ctrl+C/Ctrl+D during input prompt
-                        console.print()  # New line after ^C
+                        # Note: signal handler already set interrupted=True and printed message
+                        console.print()  # New line after ^C (if not already printed by signal handler)
                         if agentic:
                             # Ensure we don't auto-continue after interrupt
                             yielded_to_human = True
                             continue
                         else:
+                            # In non-agentic mode, exit cleanly
+                            console.print("[blue]👋 Goodbye![/blue]")
                             break
 
                 if not user_input:
@@ -1322,15 +1326,16 @@ async def _chat_session(
 
                     # Display token usage if available (accumulated across all events)
                     if accumulated_usage["input_tokens"] > 0 or accumulated_usage["output_tokens"] > 0:
-                        # Calculate total input tokens (new + cached)
+                        # Calculate total input tokens for this turn (new + cached + cache creation)
                         total_input = (
                             accumulated_usage["input_tokens"]
                             + accumulated_usage["cache_read_tokens"]
                             + accumulated_usage.get("cache_creation_tokens", 0)
                         )
 
-                        # Update conversation totals (persisted to DB by manager)
-                        conversation_totals["input_tokens"] += total_input
+                        # Update conversation totals - track components separately to avoid double counting
+                        # input_tokens = fresh tokens only (not cached)
+                        conversation_totals["input_tokens"] += accumulated_usage["input_tokens"]
                         conversation_totals["output_tokens"] += accumulated_usage["output_tokens"]
                         conversation_totals["cache_read_tokens"] += accumulated_usage["cache_read_tokens"]
                         conversation_totals["cost_usd"] += accumulated_usage["cost_usd"]
@@ -1350,7 +1355,7 @@ async def _chat_session(
 
                         # Add conversation totals (shows cumulative usage across all sessions)
                         if conversation_totals["turns"] > 1:
-                            # Total input = new input tokens + cached tokens
+                            # Total input = fresh input tokens + cached tokens (each tracked separately)
                             conv_total_input = conversation_totals['input_tokens'] + conversation_totals['cache_read_tokens']
                             usage_parts.append(
                                 f"[dim cyan]│ total: {conversation_totals['turns']} turns, {format_tokens(conv_total_input)} in, {format_tokens(conversation_totals['output_tokens'])} out, ${conversation_totals['cost_usd']:.2f}[/dim cyan]"
@@ -1416,8 +1421,14 @@ async def _chat_session(
                 if not agentic:
                     yielded_to_human = True
 
+                # If interrupted in non-agentic mode, exit after saving partial response
+                if interrupted and not agentic:
+                    console.print("[dim]✓ Partial response saved. Exiting...[/dim]")
+                    break
+
             except KeyboardInterrupt:
                 # Signal handler already printed message and set flags
+                # This shouldn't happen often now since signal handler sets flag instead of raising
                 if not agentic:
                     break
                 # In agentic mode, signal handler already set interrupted=True, yielded_to_human=True

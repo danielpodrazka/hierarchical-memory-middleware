@@ -634,14 +634,17 @@ def generate_context_html(
     </div>
 '''
 
-    # System prompt section (collapsed by default)
+    # Full prompt section (collapsed by default)
     html_content += f'''
     <div class="section system">
         <div class="section-header" onclick="toggleSection(this)">
-            <span>⚙️ Full System Prompt ({format_tokens(system_prompt_tokens)})</span>
+            <span>📄 Full Prompt ({format_tokens(system_prompt_tokens)})</span>
             <span class="toggle">▶</span>
         </div>
         <div class="section-content collapsed">
+            <p style="color: #888; font-size: 0.85em; margin: 0 0 10px 0;">
+                ℹ️ This is sent as the <strong>system prompt</strong> to the Claude Agent SDK
+            </p>
             <pre class="system-prompt">{html.escape(system_prompt)}</pre>
         </div>
     </div>
