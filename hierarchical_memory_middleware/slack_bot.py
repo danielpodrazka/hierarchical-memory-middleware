@@ -990,15 +990,11 @@ Use these tools when you need more context about what was discussed in the chann
                         # Format result
                         result_block = ""
                         if result:
-                            # Don't truncate Edit results so user sees the full edit
-                            if is_edit_tool:
-                                result_preview = result
-                            else:
-                                result_preview = result[:800] if len(result) > 800 else result
-                                # Truncate to first 10 lines (except for Edit)
-                                lines = result_preview.split("\n")
-                                if len(lines) > 10:
-                                    result_preview = "\n".join(lines[:10]) + f"\n... ({len(lines)} lines total)"
+                            result_preview = result[:800] if len(result) > 800 else result
+                            # Truncate to first 10 lines
+                            lines = result_preview.split("\n")
+                            if len(lines) > 10:
+                                result_preview = "\n".join(lines[:10]) + f"\n... ({len(lines)} lines total)"
                             status = ":x:" if is_error else ":white_check_mark:"
                             # Include tool name next to the checkmark
                             result_block = f"\n{status} `{name}` ```{result_preview}```"
