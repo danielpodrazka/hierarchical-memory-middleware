@@ -52,6 +52,21 @@ class DuckDBStorage:
                 if enable_semantic_search:
                     self._init_vss(conn)
 
+    def _ensure_schema_exists(self, conn: duckdb.DuckDBPyConnection) -> None:
+        """Check if schema exists and initialize if missing.
+
+        This is a safety check for edge cases where the DB file exists
+        but schema wasn't properly initialized (e.g., crash during init,
+        corrupted file, etc.).
+        """
+        try:
+            # Quick check - just see if token_usage table exists
+            conn.execute("SELECT 1 FROM token_usage LIMIT 0")
+        except duckdb.CatalogException:
+            # Table doesn't exist - reinitialize schema
+            logger.warning(f"Schema missing in {self.db_path}, reinitializing...")
+            _init_schema(conn)
+
     @contextmanager
     def _get_connection(self):
         """Get appropriate database connection with proper cleanup."""
@@ -61,6 +76,8 @@ class DuckDBStorage:
         else:
             # For file databases, use the existing context manager
             with get_db_connection(self.db_path, init_schema=False) as conn:
+                # Safety check for schema existence
+                self._ensure_schema_exists(conn)
                 yield conn
 
     def close(self):
