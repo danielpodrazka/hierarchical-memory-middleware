@@ -82,6 +82,7 @@ class SlackBotConfig:
     show_tool_calls: bool = True  # Show tool usage during streaming (hidden in final message)
     show_tool_details: bool = True  # Show tool arguments during execution
     show_thinking: bool = True  # Show "thinking" status
+    verbose_tools: bool = False  # Show full tool details (args + results) in final message
     max_message_length: int = 3000  # Slack message limit (actual is 40k, but we chunk)
     update_interval_seconds: float = 2.0  # How often to update streaming message
 
@@ -103,6 +104,7 @@ class SlackBotConfig:
             show_tool_calls=os.environ.get("SLACK_SHOW_TOOL_CALLS", "true").lower() == "true",
             show_tool_details=os.environ.get("SLACK_SHOW_TOOL_DETAILS", "true").lower() == "true",
             show_thinking=os.environ.get("SLACK_SHOW_THINKING", "true").lower() == "true",
+            verbose_tools=os.environ.get("SLACK_VERBOSE_TOOLS", "false").lower() == "true",
         )
 
 
@@ -667,6 +669,7 @@ Use these tools when you need more context about what was discussed in the chann
         # Track tool calls: {tool_id: {"name": str, "args": dict, "result": str, "is_error": bool}}
         active_tool_calls: Dict[str, Dict[str, Any]] = {}
         completed_tool_names: List[str] = []  # Just tool names for final message
+        completed_tools: List[Dict[str, Any]] = []  # Full tool info for verbose mode
         last_update = datetime.now()
 
         try:
@@ -715,8 +718,9 @@ Use these tools when you need more context about what was discussed in the chann
                             tool_info = active_tool_calls[event.tool_id]
                             tool_info["result"] = event.content
                             tool_info["is_error"] = event.is_error
-                            # Move to completed
+                            # Move to completed (both simple and detailed)
                             completed_tool_names.append(tool_info["name"])
+                            completed_tools.append(tool_info.copy())
                             del active_tool_calls[event.tool_id]
                         # Update to show tool result briefly
                         await self._update_response_message(
@@ -736,7 +740,7 @@ Use these tools when you need more context about what was discussed in the chann
                         f"{event.output_tokens} out, ${event.cost_usd:.4f}"
                     )
 
-            # Send final response (with tool details hidden)
+            # Send final response (with tool details shown in verbose mode)
             await self._update_response_message(
                 client=client,
                 channel_id=channel_id,
@@ -744,6 +748,7 @@ Use these tools when you need more context about what was discussed in the chann
                 text=response_text,
                 active_tools={},  # No active tools in final
                 completed_tool_names=completed_tool_names,
+                completed_tools=completed_tools,
                 is_final=True,
             )
 
@@ -772,6 +777,7 @@ Use these tools when you need more context about what was discussed in the chann
         active_tools: Dict[str, Dict[str, Any]],
         completed_tool_names: List[str],
         is_final: bool,
+        completed_tools: Optional[List[Dict[str, Any]]] = None,
     ):
         """Update the response message in Slack.
 
@@ -783,9 +789,10 @@ Use these tools when you need more context about what was discussed in the chann
             active_tools: Currently executing tools with details
             completed_tool_names: Names of completed tools (for final summary)
             is_final: Whether this is the final update
+            completed_tools: Full tool info (args + results) for verbose mode
         """
         # Format the message
-        formatted_text = self._format_response(text, active_tools, completed_tool_names, is_final)
+        formatted_text = self._format_response(text, active_tools, completed_tool_names, is_final, completed_tools)
 
         # Chunk if too long
         chunks = self._chunk_message(formatted_text)
@@ -827,17 +834,19 @@ Use these tools when you need more context about what was discussed in the chann
         active_tools: Optional[Dict[str, Dict[str, Any]]] = None,
         completed_tool_names: Optional[List[str]] = None,
         is_final: bool = True,
+        completed_tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """Format response text for Slack.
 
         During streaming: shows detailed tool information (name, args, status)
-        After completion: hides tool details, shows only compact summary
+        After completion: hides tool details unless verbose_tools is enabled
 
         Args:
             text: Response text
             active_tools: Currently executing tools with details
             completed_tool_names: Names of completed tools
             is_final: Whether this is the final response
+            completed_tools: Full tool info (args + results) for verbose mode
 
         Returns:
             Formatted Slack message
@@ -874,8 +883,39 @@ Use these tools when you need more context about what was discussed in the chann
                 parts.append("\n".join(tool_lines))
                 parts.append("")
 
-        # FINAL: Don't show any tool information (keep message clean)
-        # The tool calls were visible during streaming, now we hide them
+        elif is_final and self.slack_config.verbose_tools and completed_tools:
+            # VERBOSE MODE: Show full tool details in final message
+            parts.append("*Tool Calls:*")
+            for tool_info in completed_tools:
+                name = tool_info["name"]
+                args = tool_info.get("args", {})
+                result = tool_info.get("result", "")
+                is_error = tool_info.get("is_error", False)
+
+                # Format tool call header
+                parts.append(f"▶ `{name}`")
+
+                # Format args (as JSON code block, truncated)
+                if args:
+                    import json
+                    args_str = json.dumps(args, indent=2)
+                    if len(args_str) > 500:
+                        args_str = args_str[:497] + "..."
+                    parts.append(f"```{args_str}```")
+
+                # Format result (truncated)
+                if result:
+                    result_preview = result[:800] if len(result) > 800 else result
+                    # Truncate to first 10 lines
+                    lines = result_preview.split("\n")
+                    if len(lines) > 10:
+                        result_preview = "\n".join(lines[:10]) + f"\n... ({len(lines)} lines total)"
+                    status = "❌" if is_error else "◀"
+                    parts.append(f"{status} ```{result_preview}```")
+
+                parts.append("")  # Empty line between tools
+
+            parts.append("---")  # Divider before response text
 
         # Add response text
         if text:
@@ -1133,6 +1173,7 @@ async def run_slack_bot(
     permission_mode: str = "default",
     db_path: Optional[str] = None,
     working_dir: Optional[str] = None,
+    verbose_tools: bool = False,
 ):
     """Run the Slack bot.
 
@@ -1140,6 +1181,7 @@ async def run_slack_bot(
         permission_mode: Permission mode for Claude Code tools
         db_path: Optional custom database path
         working_dir: Working directory for file operations (defaults to cwd)
+        verbose_tools: Show full tool details in final messages
     """
     # Load config
     slack_config = SlackBotConfig.from_env()
@@ -1147,6 +1189,10 @@ async def run_slack_bot(
 
     if db_path:
         hmm_config.db_path = db_path
+
+    # Override verbose_tools from CLI flag
+    if verbose_tools:
+        slack_config.verbose_tools = True
 
     # Create and start bot
     bot = SlackHMMBot(
@@ -1205,6 +1251,11 @@ def main():
         action="store_true",
         help="Skip all permission checks (alias for --permission-mode bypassPermissions)",
     )
+    parser.add_argument(
+        "--verbose-tools",
+        action="store_true",
+        help="Show full tool call details (arguments and results) in final messages. Useful for debugging/coding sessions.",
+    )
 
     args = parser.parse_args()
 
@@ -1250,6 +1301,7 @@ def main():
         permission_mode=args.permission_mode,
         db_path=args.db_path,
         working_dir=work_path,
+        verbose_tools=args.verbose_tools,
     ))
 
 

@@ -149,6 +149,9 @@ hmm-slack /path/to/your/project
 
 # With full permissions for agentic tasks
 hmm-slack --dangerously-skip-permissions /path/to/project
+
+# Verbose mode - show tool calls and results in final messages (useful for debugging/coding)
+hmm-slack --verbose-tools /path/to/project
 ```
 
 **Key Features:**
