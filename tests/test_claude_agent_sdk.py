@@ -208,3 +208,91 @@ class TestClaudeAgentSDKConversationManager:
 
         with pytest.raises(ValueError, match="No active conversation"):
             await manager.chat("Hello")
+
+    def test_format_successful_tool_actions_filters_failures(self):
+        """Test that _format_successful_tool_actions filters out failed attempts."""
+        config = Config(work_model="claude-agent-sonnet")
+        model_config = ModelManager.get_model_config("claude-agent-sonnet")
+
+        manager = ClaudeAgentSDKConversationManager(
+            config=config,
+            model_config=model_config,
+        )
+
+        # Test with mixed successful and failed tool calls
+        ai_components = {
+            "tool_calls": [
+                {"tool_call_id": "1", "tool_name": "Read", "args": {"file_path": "/path/to/existing.py"}},
+                {"tool_call_id": "2", "tool_name": "Read", "args": {"file_path": "/path/to/missing.py"}},
+                {"tool_call_id": "3", "tool_name": "Grep", "args": {"pattern": "def foo"}},
+                {"tool_call_id": "4", "tool_name": "Grep", "args": {"pattern": "nonexistent"}},
+                {"tool_call_id": "5", "tool_name": "Glob", "args": {"pattern": "*.py"}},
+            ],
+            "tool_results": [
+                {"tool_call_id": "1", "content": "def existing():\n    pass", "is_error": False},
+                {"tool_call_id": "2", "content": "File does not exist.", "is_error": False},
+                {"tool_call_id": "3", "content": "Found 5 files\nfile1.py\nfile2.py", "is_error": False},
+                {"tool_call_id": "4", "content": "No matches found", "is_error": False},
+                {"tool_call_id": "5", "content": "file1.py\nfile2.py\nfile3.py", "is_error": False},
+            ],
+        }
+
+        result = manager._format_successful_tool_actions(ai_components)
+
+        # Should include successful read
+        assert "Read: /path/to/existing.py" in result
+        # Should NOT include failed read
+        assert "missing.py" not in result
+        # Should include successful grep
+        assert "Grep 'def foo'" in result
+        # Should NOT include grep with no matches
+        assert "nonexistent" not in result
+        # Should include glob with file count
+        assert "Glob '*.py': 3 files" in result
+
+    def test_format_successful_tool_actions_handles_errors(self):
+        """Test that _format_successful_tool_actions handles is_error=True."""
+        config = Config(work_model="claude-agent-sonnet")
+        model_config = ModelManager.get_model_config("claude-agent-sonnet")
+
+        manager = ClaudeAgentSDKConversationManager(
+            config=config,
+            model_config=model_config,
+        )
+
+        ai_components = {
+            "tool_calls": [
+                {"tool_call_id": "1", "tool_name": "Bash", "args": {"command": "ls /tmp"}},
+                {"tool_call_id": "2", "tool_name": "Bash", "args": {"command": "invalid_cmd"}},
+            ],
+            "tool_results": [
+                {"tool_call_id": "1", "content": "file1 file2", "is_error": False},
+                {"tool_call_id": "2", "content": "command not found", "is_error": True},
+            ],
+        }
+
+        result = manager._format_successful_tool_actions(ai_components)
+
+        # Should include successful bash
+        assert "Bash: ls /tmp" in result
+        # Should NOT include error bash
+        assert "invalid_cmd" not in result
+
+    def test_format_successful_tool_actions_empty_components(self):
+        """Test that _format_successful_tool_actions handles empty/None input."""
+        config = Config(work_model="claude-agent-sonnet")
+        model_config = ModelManager.get_model_config("claude-agent-sonnet")
+
+        manager = ClaudeAgentSDKConversationManager(
+            config=config,
+            model_config=model_config,
+        )
+
+        # None input
+        assert manager._format_successful_tool_actions(None) == ""
+
+        # Empty dict
+        assert manager._format_successful_tool_actions({}) == ""
+
+        # Empty tool lists
+        assert manager._format_successful_tool_actions({"tool_calls": [], "tool_results": []}) == ""

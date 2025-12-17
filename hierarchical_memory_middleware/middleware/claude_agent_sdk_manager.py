@@ -35,6 +35,54 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import StreamEvent
 
 
+# Tools that typically involve file paths (for context tracking)
+FILE_PATH_TOOLS = {
+    "Read": ["file_path"],
+    "Write": ["file_path"],
+    "Edit": ["file_path"],
+    "Glob": ["path"],
+    "Grep": ["path"],
+    "NotebookEdit": ["notebook_path"],
+}
+
+
+def _extract_file_paths_from_tool_calls(tool_calls: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Extract file paths from tool calls, grouped by action type.
+
+    Returns a dict like:
+    {
+        "read": ["/path/to/file1.py", "/path/to/file2.py"],
+        "edited": ["/path/to/file3.py"],
+        "searched": ["/path/to/dir"],
+    }
+    """
+    paths: Dict[str, List[str]] = {
+        "read": [],
+        "edited": [],
+        "searched": [],
+    }
+
+    for call in tool_calls:
+        tool_name = call.get("tool_name", "")
+        args = call.get("args") or call.get("tool_input") or {}
+
+        if tool_name == "Read":
+            file_path = args.get("file_path")
+            if file_path and file_path not in paths["read"]:
+                paths["read"].append(file_path)
+        elif tool_name in ("Write", "Edit", "NotebookEdit"):
+            file_path = args.get("file_path") or args.get("notebook_path")
+            if file_path and file_path not in paths["edited"]:
+                paths["edited"].append(file_path)
+        elif tool_name in ("Glob", "Grep"):
+            path = args.get("path")
+            if path and path not in paths["searched"]:
+                paths["searched"].append(path)
+
+    # Remove empty categories
+    return {k: v for k, v in paths.items() if v}
+
+
 @dataclass
 class StreamChunk:
     """A text chunk from the stream."""
@@ -191,6 +239,10 @@ class ClaudeAgentSDKConversationManager:
         self._current_user_message: Optional[str] = None
         self._stream_saved: bool = False
 
+        # HTML context view export settings
+        self._html_export_dir: Optional[str] = None
+        self._last_system_prompt: Optional[str] = None
+
         # Use subscription mode (clears API key to force OAuth)
         self.use_subscription = config.agent_use_subscription
 
@@ -335,6 +387,173 @@ class ClaudeAgentSDKConversationManager:
 
         return self.conversation_id
 
+    def _format_successful_tool_actions(self, ai_components: Optional[Dict[str, Any]]) -> str:
+        """Format successful tool actions from an AI node for context.
+
+        Filters out failed attempts (file not found, 0 results, errors) and
+        returns a compact summary of what was successfully accessed/done.
+
+        Args:
+            ai_components: The ai_components dict from a ConversationNode
+
+        Returns:
+            A compact string summarizing successful tool actions, or empty string
+        """
+        if not ai_components:
+            return ""
+
+        tool_calls = ai_components.get("tool_calls", [])
+        tool_results = ai_components.get("tool_results", [])
+
+        if not tool_calls or not tool_results:
+            return ""
+
+        # Build a map of tool_call_id -> result
+        results_by_id = {r.get("tool_call_id") or r.get("tool_id"): r for r in tool_results}
+
+        # Track actions by type for deduplication
+        # For file-based tools (Read, Edit, Write), track unique paths
+        # For search tools (Grep, Glob), track unique patterns
+        read_files = []
+        edited_files = []
+        wrote_files = []
+        grep_results = []  # List of (pattern, result_summary)
+        glob_results = []  # List of (pattern, file_count)
+        bash_commands = []
+        web_fetches = []
+        web_searches = []
+        other_tools = set()
+
+        for call in tool_calls:
+            call_id = call.get("tool_call_id") or call.get("tool_id")
+            tool_name = call.get("tool_name", "unknown")
+            args = call.get("args") or call.get("tool_input") or {}
+            result = results_by_id.get(call_id, {})
+
+            # Skip if explicitly marked as error
+            if result.get("is_error"):
+                continue
+
+            content = result.get("content", "")
+            if isinstance(content, list):
+                # Handle list of content blocks
+                content = " ".join(str(c) for c in content)
+            content_str = str(content).lower()
+
+            # Filter based on tool type and result content
+            if tool_name == "Read":
+                file_path = args.get("file_path", "")
+                # Skip if file doesn't exist
+                if "does not exist" in content_str or "file not found" in content_str:
+                    continue
+                # Skip if empty file
+                if "empty contents" in content_str or not content.strip():
+                    continue
+                # Success - track unique file path
+                if file_path not in read_files:
+                    read_files.append(file_path)
+
+            elif tool_name == "Grep":
+                pattern = args.get("pattern", "")
+                # Skip if no matches
+                if "no matches found" in content_str or "found 0" in content_str:
+                    continue
+                if not content.strip():
+                    continue
+                # Extract file count if possible
+                if "found" in content_str:
+                    result_summary = content.split(chr(10))[0]
+                else:
+                    result_summary = "found matches"
+                # Track unique patterns
+                if not any(p == pattern for p, _ in grep_results):
+                    grep_results.append((pattern, result_summary))
+
+            elif tool_name == "Glob":
+                pattern = args.get("pattern", "")
+                # Skip if no matches
+                if not content.strip() or "no matches" in content_str:
+                    continue
+                # Count files found
+                file_count = len([l for l in content.split("\n") if l.strip()])
+                # Track unique patterns
+                if not any(p == pattern for p, _ in glob_results):
+                    glob_results.append((pattern, file_count))
+
+            elif tool_name == "Bash":
+                command = args.get("command", "")[:50]  # Truncate long commands
+                # Skip if command failed (common error indicators)
+                if "error:" in content_str or "command not found" in content_str:
+                    continue
+                if "permission denied" in content_str:
+                    continue
+                # Skip if exited with non-zero (if we can detect it)
+                if "exit code" in content_str and "exit code 0" not in content_str:
+                    continue
+                if command not in bash_commands:
+                    bash_commands.append(command)
+
+            elif tool_name == "Edit":
+                file_path = args.get("file_path", "")
+                # Skip if edit failed
+                if "error" in content_str or "failed" in content_str:
+                    continue
+                if file_path not in edited_files:
+                    edited_files.append(file_path)
+
+            elif tool_name == "Write":
+                file_path = args.get("file_path", "")
+                if "error" in content_str or "failed" in content_str:
+                    continue
+                if file_path not in wrote_files:
+                    wrote_files.append(file_path)
+
+            elif tool_name == "WebFetch":
+                url = args.get("url", "")[:50]
+                if "error" in content_str or "failed" in content_str:
+                    continue
+                if url not in web_fetches:
+                    web_fetches.append(url)
+
+            elif tool_name == "WebSearch":
+                query = args.get("query", "")[:30]
+                if "error" in content_str or "no results" in content_str:
+                    continue
+                if query not in web_searches:
+                    web_searches.append(query)
+
+            # For other tools, include if not an error
+            elif not result.get("is_error") and content.strip():
+                # Generic: just note the tool was used
+                other_tools.add(tool_name)
+
+        # Build the final summary with deduped actions
+        successful_actions = []
+
+        if read_files:
+            successful_actions.append(f"Read: {' | '.join(read_files)}")
+        if edited_files:
+            successful_actions.append(f"Edited: {' | '.join(edited_files)}")
+        if wrote_files:
+            successful_actions.append(f"Wrote: {' | '.join(wrote_files)}")
+        for pattern, result_summary in grep_results:
+            successful_actions.append(f"Grep '{pattern}': {result_summary}")
+        for pattern, file_count in glob_results:
+            successful_actions.append(f"Glob '{pattern}': {file_count} files")
+        for command in bash_commands:
+            successful_actions.append(f"Bash: {command}")
+        for url in web_fetches:
+            successful_actions.append(f"Fetched: {url}")
+        for query in web_searches:
+            successful_actions.append(f"Searched: '{query}'")
+        for tool_name in sorted(other_tools):
+            successful_actions.append(f"{tool_name}")
+
+        if not successful_actions:
+            return ""
+
+        return " | ".join(successful_actions)
+
     async def _build_memory_context(self) -> str:
         """Build the hierarchical memory context for the conversation.
 
@@ -434,7 +653,15 @@ class ClaudeAgentSDKConversationManager:
                 # Check if this node is among those to be compressed to SUMMARY
                 node_index = full_nodes.index(node)
                 hint = " ⚠️ (will be summarized next)" if node_index < full_nodes_to_compress_count else ""
-                context_parts.append(f"[{role}] {node.content}{hint}")
+
+                # For AI nodes, include successful tool actions summary
+                tool_summary = ""
+                if node.node_type == NodeType.AI and node.ai_components:
+                    tool_summary = self._format_successful_tool_actions(node.ai_components)
+                    if tool_summary:
+                        tool_summary = f"\n  [Tools: {tool_summary}]"
+
+                context_parts.append(f"[{role}] {node.content}{tool_summary}{hint}")
 
         return "\n".join(context_parts)
 
@@ -827,7 +1054,71 @@ If you don't call yield_to_human, the system will automatically prompt you to co
         if memory_context:
             parts.append(f"\n{memory_context}")
 
-        return "".join(parts)
+        system_prompt = "".join(parts)
+
+        # Store for HTML export
+        self._last_system_prompt = system_prompt
+
+        return system_prompt
+
+    def enable_html_export(self, export_dir: str) -> None:
+        """Enable HTML context view export.
+
+        Args:
+            export_dir: Directory to save HTML files (e.g., ".conversations")
+        """
+        self._html_export_dir = export_dir
+        logger.debug(f"HTML context export enabled: {export_dir}")
+
+    async def export_context_html(
+        self,
+        current_user_message: Optional[str] = None,
+        token_stats: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Export the current AI context as an HTML file.
+
+        Args:
+            current_user_message: The current user message being processed
+            token_stats: Optional token usage statistics
+
+        Returns:
+            Path to the saved HTML file, or None if export is disabled
+        """
+        if not self._html_export_dir or not self.conversation_id:
+            return None
+
+        try:
+            from .context_html_view import save_context_html
+
+            # Get all nodes
+            nodes = await self.storage.get_conversation_nodes(self.conversation_id)
+
+            # Get scratchpad
+            scratchpad = await self.storage.get_system_prompt(self.conversation_id)
+
+            # Build fresh system prompt to show what would be sent
+            # This ensures the HTML always shows the current prompt, even before first message
+            memory_context = await self._build_memory_context()
+            system_prompt = await self._build_system_prompt(memory_context)
+
+            output_path = save_context_html(
+                output_dir=self._html_export_dir,
+                conversation_id=self.conversation_id,
+                system_prompt=system_prompt,
+                nodes=nodes,
+                scratchpad=scratchpad,
+                custom_instructions=self.custom_instructions,
+                agentic_mode=self.agentic_mode,
+                current_user_message=current_user_message,
+                token_stats=token_stats,
+            )
+
+            logger.debug(f"Exported HTML context view to {output_path}")
+            return output_path
+
+        except Exception as e:
+            logger.error(f"Error exporting HTML context: {e}")
+            return None
 
     async def _check_and_compress(self) -> None:
         """Check if advanced hierarchical compression is needed and perform it."""
@@ -948,13 +1239,57 @@ If you don't call yield_to_human, the system will automatically prompt you to co
             """Get the original full content of the node."""
             return node.content
 
+        def estimate_archive_batch_tokens(archive_nodes: List[ConversationNode]) -> int:
+            """Estimate tokens for archive nodes as they're actually rendered in context.
+
+            Archive nodes are batched into groups of 20 and only show:
+            'Nodes X-Y:(N nodes, M lines) [Topics: topic1, topic2, ...]'
+            """
+            if not archive_nodes:
+                return 0
+
+            batch_size = 20
+            total_tokens = 0
+
+            for i in range(0, len(archive_nodes), batch_size):
+                batch = archive_nodes[i:i + batch_size]
+                if not batch:
+                    continue
+
+                # Collect topics from batch
+                all_topics = []
+                total_lines = 0
+                for node in batch:
+                    if node.topics:
+                        all_topics.extend(node.topics)
+                    total_lines += node.line_count or 1
+
+                # Get top 5 topics
+                topic_counts = {}
+                for topic in all_topics:
+                    topic_counts[topic] = topic_counts.get(topic, 0) + 1
+                top_topics = sorted(topic_counts.keys(), key=lambda t: topic_counts[t], reverse=True)[:5]
+                topics_str = ", ".join(top_topics) if top_topics else "general"
+
+                # This is the actual text that appears in context
+                batch_text = f"Nodes {batch[0].node_id}-{batch[-1].node_id}:({len(batch)} nodes, {total_lines} lines) [Topics: {topics_str}]"
+                total_tokens += self._estimate_tokens(batch_text)
+
+            return total_tokens
+
         token_stats = {}
         total_current_tokens = 0
         total_original_tokens = 0
 
         for level, level_nodes in nodes_by_level.items():
             level_name = level.name.lower()
-            current_tokens = sum(self._estimate_tokens(get_context_text(n)) for n in level_nodes)
+
+            # Special handling for ARCHIVE - count batched representation
+            if level == CompressionLevel.ARCHIVE:
+                current_tokens = estimate_archive_batch_tokens(level_nodes)
+            else:
+                current_tokens = sum(self._estimate_tokens(get_context_text(n)) for n in level_nodes)
+
             original_tokens = sum(self._estimate_tokens(get_original_text(n)) for n in level_nodes)
 
             token_stats[level_name] = {

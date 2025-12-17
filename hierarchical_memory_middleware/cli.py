@@ -855,11 +855,17 @@ async def _chat_session(
         conversation_ai_view_json_path = os.path.join(
             export_dir, f"{conv_id}_ai_view.json"
         )
+        conversation_html_view_path = os.path.join(export_dir, f"{conv_id}_context.html")
         console.print(
             f"[dim]📄 Real-time conversation JSON: {conversation_json_path}[/dim]"
         )
         console.print(f"[dim]🤖 AI view JSON: {conversation_ai_view_json_path}[/dim]")
+        console.print(f"[dim]🌐 HTML context view: {conversation_html_view_path}[/dim]")
         console.print()
+
+        # Enable HTML export on the manager if it supports it
+        if hasattr(manager, 'enable_html_export'):
+            manager.enable_html_export(export_dir)
 
         # Show conversation summary if resuming
         if conversation_id == conv_id:  # Successfully resumed
@@ -867,6 +873,10 @@ async def _chat_session(
 
         # Save initial conversation state
         await save_conversation_to_json(manager, conv_id, export_dir)
+
+        # Export initial HTML context view
+        if hasattr(manager, 'export_context_html'):
+            await manager.export_context_html()
 
         # Show help
         console.print("[bold cyan]💬 Chat Commands:[/bold cyan]")
@@ -1038,6 +1048,13 @@ async def _chat_session(
                         "duration_ms": 0,
                         "model": None,
                     }
+
+                    # Export HTML context before sending (shows what AI will see)
+                    if hasattr(manager, 'export_context_html'):
+                        await manager.export_context_html(
+                            current_user_message=user_input,
+                            token_stats=conversation_totals if conversation_totals else None
+                        )
 
                     # Use tool events only for Agent SDK manager
                     if is_agent_sdk:
@@ -1385,6 +1402,12 @@ async def _chat_session(
 
                 # Save conversation state
                 await save_conversation_to_json(manager, conv_id, export_dir)
+
+                # Export HTML context view if supported (without current message = turn complete)
+                if hasattr(manager, 'export_context_html'):
+                    await manager.export_context_html(
+                        token_stats=conversation_totals if conversation_totals else None
+                    )
 
                 # Debug: Log flag state before decision
                 logger.debug(f"DEBUG: After stream complete - agentic={agentic}, yielded_to_human={yielded_to_human}, interrupted={interrupted}")
@@ -2005,12 +2028,12 @@ async def show_detailed_stats(manager):
         if token_stats:
             table.add_row(
                 "Current Tokens",
-                str(token_stats.get("total_current_tokens", 0)),
+                f"{token_stats.get('total_current_tokens', 0):,}",
                 "Total tokens in current context",
             )
             table.add_row(
                 "Original Tokens",
-                str(token_stats.get("total_original_tokens", 0)),
+                f"{token_stats.get('total_original_tokens', 0):,}",
                 "Original tokens before compression",
             )
             saved_percent = token_stats.get("tokens_saved_percent", 0)
@@ -2022,6 +2045,47 @@ async def show_detailed_stats(manager):
                 )
 
         console.print(table)
+
+        # Add token breakdown by compression level
+        by_level = token_stats.get("by_level", {})
+        if by_level:
+            breakdown_table = Table(title="🔢 Token Breakdown by Compression Level", show_header=True)
+            breakdown_table.add_column("Level", style="cyan")
+            breakdown_table.add_column("Nodes", style="yellow", justify="right")
+            breakdown_table.add_column("Current Tokens", style="green", justify="right")
+            breakdown_table.add_column("Original Tokens", style="blue", justify="right")
+            breakdown_table.add_column("Ratio", style="magenta", justify="right")
+
+            total_current = token_stats.get("total_current_tokens", 0)
+
+            for level in ["full", "summary", "meta", "archive"]:
+                level_data = by_level.get(level, {})
+                count = level_data.get("count", 0)
+                current = level_data.get("current_tokens", 0)
+                original = level_data.get("original_tokens", 0)
+                ratio = level_data.get("compression_ratio", 0)
+
+                # Calculate percentage of total context
+                pct = (current / total_current * 100) if total_current > 0 else 0
+
+                breakdown_table.add_row(
+                    level.upper(),
+                    str(count),
+                    f"{current:,} ({pct:.1f}%)",
+                    f"{original:,}",
+                    f"{ratio:.1f}x" if ratio > 0 else "-",
+                )
+
+            # Add totals row
+            breakdown_table.add_row(
+                "[bold]TOTAL[/bold]",
+                f"[bold]{summary.get('total_nodes', 0)}[/bold]",
+                f"[bold]{total_current:,}[/bold]",
+                f"[bold]{token_stats.get('total_original_tokens', 0):,}[/bold]",
+                f"[bold]{token_stats.get('overall_compression_ratio', 0):.1f}x[/bold]",
+            )
+
+            console.print(breakdown_table)
 
     except Exception as e:
         console.print(f"[red]❌ Error getting detailed stats: {e}[/red]")
