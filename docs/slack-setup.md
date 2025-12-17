@@ -37,6 +37,7 @@ Navigate to **OAuth & Permissions** in the sidebar and add these **Bot Token Sco
 | `im:read` | Access DM info |
 | `im:write` | Send DMs |
 | `channels:history` | Read channel history (for thread context) |
+| `files:read` | Access files shared in conversations |
 | `commands` | Handle slash commands (optional) |
 
 ### 4. Enable Socket Mode

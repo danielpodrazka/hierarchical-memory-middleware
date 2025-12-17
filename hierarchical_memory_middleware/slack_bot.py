@@ -121,6 +121,7 @@ class SlackHMMBot:
         slack_config: SlackBotConfig,
         hmm_config: Optional[Config] = None,
         permission_mode: str = "default",
+        working_dir: Optional[str] = None,
     ):
         """Initialize the Slack HMM bot.
 
@@ -131,6 +132,7 @@ class SlackHMMBot:
                 - "default": SDK handles permissions
                 - "acceptEdits": Auto-approve file edits
                 - "bypassPermissions": No prompts (for automation)
+            working_dir: Working directory for file operations (defaults to cwd)
         """
         if not SLACK_BOLT_AVAILABLE:
             raise ImportError(
@@ -141,6 +143,7 @@ class SlackHMMBot:
         self.slack_config = slack_config
         self.hmm_config = hmm_config or Config()
         self.permission_mode = permission_mode
+        self.working_dir = working_dir or os.getcwd()
 
         # Initialize Slack app
         self.app = AsyncApp(token=slack_config.bot_token)
@@ -237,6 +240,13 @@ SLACK TOOLS: You have access to tools for fetching more Slack context:
 - `get_slack_thread_replies`: Get all replies in a thread
 - `search_slack_messages`: Search for messages across Slack (requires search:read scope)
 - `get_slack_user_info`: Look up user details by user ID
+- `download_slack_file`: Download files shared in Slack to the slack_files directory
+- `get_slack_file_info`: Get file metadata including download URL
+
+FILE HANDLING: When users share files in Slack:
+1. Use `download_slack_file` with the file URL to save it locally
+2. For images: After downloading, use the Read tool with the saved path to view the image
+3. For text files: Use the Read tool to read the contents
 
 Use these tools when you need more context about what was discussed in the channel."""
 
@@ -244,6 +254,7 @@ Use these tools when you need more context about what was discussed in the chann
             slack_mcp_config = SlackMCPConfig(
                 bot_token=self.slack_config.bot_token,
                 channel_id=channel_id,
+                working_dir=self.working_dir,
             )
 
             manager = ClaudeAgentSDKConversationManager(
@@ -938,10 +949,12 @@ Use these tools when you need more context about what was discussed in the chann
         Returns:
             Formatted string describing the file, or None if not processable
         """
+        file_id = file.get("id", "")
         file_type = file.get("filetype", "unknown")
         file_name = file.get("name", "unnamed")
         file_title = file.get("title", file_name)
         mimetype = file.get("mimetype", "")
+        url_private = file.get("url_private", "")
 
         # Check if it's an image
         is_image = mimetype.startswith("image/") or file_type in (
@@ -949,23 +962,33 @@ Use these tools when you need more context about what was discussed in the chann
         )
 
         if is_image:
-            # For images, include the URL so Claude can potentially analyze it
-            # Slack provides several URLs - prefer url_private for API access
-            image_url = file.get("url_private") or file.get("permalink")
-            if image_url:
-                return f"[Image attached: {file_title}]\nImage URL: {image_url}"
-            return f"[Image attached: {file_title}]"
+            # For images, include the URL so Claude can download and analyze it
+            parts = [f"[Image attached: {file_title}]"]
+            if url_private:
+                parts.append(f"URL: {url_private}")
+                parts.append("(Use download_slack_file tool with this URL to view the image)")
+            return "\n".join(parts)
 
-        # For other files, provide metadata
+        # For other files, provide metadata and download instructions
         file_size = file.get("size", 0)
         size_str = self._format_file_size(file_size) if file_size else "unknown size"
+
+        parts = [f"[File attached: {file_title} ({file_type}, {size_str})]"]
+
+        # Include file ID for API access
+        if file_id:
+            parts.append(f"File ID: {file_id}")
+
+        if url_private:
+            parts.append(f"URL: {url_private}")
+            parts.append("(Use download_slack_file tool with this URL to access the file contents)")
 
         # Include preview content for text files if available
         preview = file.get("preview", "")
         if preview:
-            return f"[File attached: {file_title} ({file_type}, {size_str})]\nPreview:\n{preview}"
+            parts.append(f"Preview:\n{preview}")
 
-        return f"[File attached: {file_title} ({file_type}, {size_str})]"
+        return "\n".join(parts)
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Format file size in human-readable format."""
@@ -1109,12 +1132,14 @@ Use these tools when you need more context about what was discussed in the chann
 async def run_slack_bot(
     permission_mode: str = "default",
     db_path: Optional[str] = None,
+    working_dir: Optional[str] = None,
 ):
     """Run the Slack bot.
 
     Args:
         permission_mode: Permission mode for Claude Code tools
         db_path: Optional custom database path
+        working_dir: Working directory for file operations (defaults to cwd)
     """
     # Load config
     slack_config = SlackBotConfig.from_env()
@@ -1128,6 +1153,7 @@ async def run_slack_bot(
         slack_config=slack_config,
         hmm_config=hmm_config,
         permission_mode=permission_mode,
+        working_dir=working_dir or os.getcwd(),
     )
 
     # Handle shutdown
@@ -1223,6 +1249,7 @@ def main():
     asyncio.run(run_slack_bot(
         permission_mode=args.permission_mode,
         db_path=args.db_path,
+        working_dir=work_path,
     ))
 
 

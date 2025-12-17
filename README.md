@@ -155,6 +155,7 @@ hmm-slack --dangerously-skip-permissions /path/to/project
 - **Per-channel memory**: Each channel has its own conversation history with hierarchical compression
 - **Thread support**: Thread replies are tracked within the parent channel's context
 - **Slack-aware tools**: Fetch channel history, search messages, look up users
+- **File handling**: Files shared in Slack are downloaded to `slack_files/` and accessible via Claude's Read tool (images, PDFs, code, any file type)
 - **Claude Code integration**: Full access to file editing, shell commands, and coding tools
 
 **Quick Setup:**

@@ -93,6 +93,7 @@ class SlackMCPConfig:
     """
     bot_token: str  # Slack bot OAuth token (xoxb-...)
     channel_id: str  # Current channel ID for default queries
+    working_dir: Optional[str] = None  # Working directory for file downloads
 
 logger = logging.getLogger(__name__)
 
@@ -223,20 +224,25 @@ class ClaudeAgentSDKConversationManager:
 
             # Check if Slack MCP config is provided - use Slack-enabled server
             if self.slack_mcp_config:
+                slack_args = [
+                    "-m",
+                    "hierarchical_memory_middleware.mcp_server.stdio_slack_memory_server",
+                    "--conversation-id",
+                    self.conversation_id,
+                    "--db-path",
+                    self.config.db_path,
+                    "--slack-bot-token",
+                    self.slack_mcp_config.bot_token,
+                    "--slack-channel-id",
+                    self.slack_mcp_config.channel_id,
+                ]
+                # Add working directory if specified
+                if self.slack_mcp_config.working_dir:
+                    slack_args.extend(["--working-dir", self.slack_mcp_config.working_dir])
+
                 mcp_servers["memory"] = {
                     "command": sys.executable,
-                    "args": [
-                        "-m",
-                        "hierarchical_memory_middleware.mcp_server.stdio_slack_memory_server",
-                        "--conversation-id",
-                        self.conversation_id,
-                        "--db-path",
-                        self.config.db_path,
-                        "--slack-bot-token",
-                        self.slack_mcp_config.bot_token,
-                        "--slack-channel-id",
-                        self.slack_mcp_config.channel_id,
-                    ],
+                    "args": slack_args,
                     "env": env,  # Pass same env to subprocess
                 }
                 logger.debug(
