@@ -157,8 +157,10 @@ hmm-slack --verbose-tools /path/to/project
 **Key Features:**
 - **Per-channel memory**: Each channel has its own conversation history with hierarchical compression
 - **Thread support**: Thread replies are tracked within the parent channel's context
-- **Slack-aware tools**: Fetch channel history, search messages, look up users
+- **Concurrent conversations**: Per-conversation DuckDB instances prevent lock conflicts when multiple channels are active simultaneously (synced back to main DB after 5 min idle)
+- **Slack-aware tools**: Fetch channel history, search messages, look up users, create channels, send DMs
 - **File handling**: Files shared in Slack are downloaded to `slack_files/` and accessible via Claude's Read tool (images, PDFs, code, any file type)
+- **Stop command**: Type `@bot stop` to interrupt an in-progress response
 - **Claude Code integration**: Full access to file editing, shell commands, and coding tools
 
 **Quick Setup:**
