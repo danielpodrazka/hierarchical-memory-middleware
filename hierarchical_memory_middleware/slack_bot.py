@@ -332,8 +332,10 @@ Use these tools when you need more context about what was discussed in the chann
         logger.debug(f"Message event received: channel_type={channel_type}, channel={channel_id}, text={event.get('text', '')[:50]}")
 
         # Ignore bot messages (including our own)
-        if event.get("bot_id") or event.get("subtype"):
-            logger.debug(f"Ignoring bot/subtype message: bot_id={event.get('bot_id')}, subtype={event.get('subtype')}")
+        # But allow file_share subtype (messages with attachments)
+        subtype = event.get("subtype")
+        if event.get("bot_id") or (subtype and subtype != "file_share"):
+            logger.debug(f"Ignoring bot/subtype message: bot_id={event.get('bot_id')}, subtype={subtype}")
             return
 
         # Ignore messages in channels (those need @mention)
@@ -345,9 +347,24 @@ Use these tools when you need more context about what was discussed in the chann
         user_id = event.get("user")
         text = event.get("text", "")
         thread_ts = event.get("thread_ts") or event.get("ts")
+        files = event.get("files", [])
 
-        if not text.strip():
+        # Build message text including file descriptions
+        message_parts = []
+        if text.strip():
+            message_parts.append(text.strip())
+
+        # Add file information to the message
+        for file in files:
+            file_info = self._format_file_info(file)
+            if file_info:
+                message_parts.append(file_info)
+
+        # Skip if no text and no files
+        if not message_parts:
             return
+
+        text = "\n\n".join(message_parts)
 
         # Fetch recent channel context (last 2 messages before this one)
         recent_context = await self._get_recent_messages(
@@ -375,17 +392,31 @@ Use these tools when you need more context about what was discussed in the chann
         user_id = event.get("user")
         text = event.get("text", "")
         thread_ts = event.get("thread_ts") or event.get("ts")
+        files = event.get("files", [])
 
         # Remove the @mention from the text
         if self._bot_user_id:
             text = text.replace(f"<@{self._bot_user_id}>", "").strip()
 
-        if not text:
+        # Build message text including file descriptions
+        message_parts = []
+        if text:
+            message_parts.append(text)
+
+        # Add file information to the message
+        for file in files:
+            file_info = self._format_file_info(file)
+            if file_info:
+                message_parts.append(file_info)
+
+        if not message_parts:
             await say(
                 "Hi! How can I help you? Just @ mention me with your question.",
                 thread_ts=thread_ts if self.slack_config.response_thread else None,
             )
             return
+
+        text = "\n\n".join(message_parts)
 
         # Fetch recent channel context (last 2 messages before this one)
         recent_context = await self._get_recent_messages(
@@ -897,6 +928,52 @@ Use these tools when you need more context about what was discussed in the chann
             return f"{key}=`{val_str}`"
 
         return ""
+
+    def _format_file_info(self, file: dict) -> Optional[str]:
+        """Format a Slack file attachment into a text description for the AI.
+
+        Args:
+            file: Slack file object from the event
+
+        Returns:
+            Formatted string describing the file, or None if not processable
+        """
+        file_type = file.get("filetype", "unknown")
+        file_name = file.get("name", "unnamed")
+        file_title = file.get("title", file_name)
+        mimetype = file.get("mimetype", "")
+
+        # Check if it's an image
+        is_image = mimetype.startswith("image/") or file_type in (
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"
+        )
+
+        if is_image:
+            # For images, include the URL so Claude can potentially analyze it
+            # Slack provides several URLs - prefer url_private for API access
+            image_url = file.get("url_private") or file.get("permalink")
+            if image_url:
+                return f"[Image attached: {file_title}]\nImage URL: {image_url}"
+            return f"[Image attached: {file_title}]"
+
+        # For other files, provide metadata
+        file_size = file.get("size", 0)
+        size_str = self._format_file_size(file_size) if file_size else "unknown size"
+
+        # Include preview content for text files if available
+        preview = file.get("preview", "")
+        if preview:
+            return f"[File attached: {file_title} ({file_type}, {size_str})]\nPreview:\n{preview}"
+
+        return f"[File attached: {file_title} ({file_type}, {size_str})]"
+
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format."""
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} TB"
 
     def _chunk_message(self, text: str) -> List[str]:
         """Split message into chunks that fit Slack's limits.
