@@ -873,25 +873,34 @@ Use these tools when you need more context about what was discussed in the chann
                         result = tool_info.get("result", "")
                         is_error = tool_info.get("is_error", False)
 
-                        # Format args (as JSON code block, truncated)
+                        # Check if this is an Edit operation (show full content for edits)
+                        is_edit_tool = name == "Edit"
+
+                        # Format args (as JSON code block)
                         args_block = ""
                         if args:
                             import json
                             args_str = json.dumps(args, indent=2)
-                            if len(args_str) > 500:
+                            # Don't truncate Edit args so user sees exactly what was edited
+                            if not is_edit_tool and len(args_str) > 500:
                                 args_str = args_str[:497] + "..."
                             args_block = f"\n```{args_str}```"
 
-                        # Format result (truncated)
+                        # Format result
                         result_block = ""
                         if result:
-                            result_preview = result[:800] if len(result) > 800 else result
-                            # Truncate to first 10 lines
-                            lines = result_preview.split("\n")
-                            if len(lines) > 10:
-                                result_preview = "\n".join(lines[:10]) + f"\n... ({len(lines)} lines total)"
+                            # Don't truncate Edit results so user sees the full edit
+                            if is_edit_tool:
+                                result_preview = result
+                            else:
+                                result_preview = result[:800] if len(result) > 800 else result
+                                # Truncate to first 10 lines (except for Edit)
+                                lines = result_preview.split("\n")
+                                if len(lines) > 10:
+                                    result_preview = "\n".join(lines[:10]) + f"\n... ({len(lines)} lines total)"
                             status = ":x:" if is_error else ":white_check_mark:"
-                            result_block = f"\n{status} ```{result_preview}```"
+                            # Include tool name next to the checkmark
+                            result_block = f"\n{status} `{name}` ```{result_preview}```"
 
                         tool_lines.append(f":wrench: `{name}`{args_block}{result_block}")
 
