@@ -37,7 +37,10 @@ Navigate to **OAuth & Permissions** in the sidebar and add these **Bot Token Sco
 | `im:read` | Access DM info |
 | `im:write` | Send DMs |
 | `channels:history` | Read channel history (for thread context) |
+| `channels:manage` | Create and manage public channels |
+| `groups:write` | Create and manage private channels |
 | `files:read` | Access files shared in conversations |
+| `users:read` | Look up user information |
 | `commands` | Handle slash commands (optional) |
 
 ### 4. Enable Socket Mode
@@ -185,6 +188,31 @@ Options:
 │                              └─────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Slack MCP Tools
+
+The Slack bot includes additional MCP tools that Claude can use to interact with Slack:
+
+| Tool | Description | Required Scope |
+|------|-------------|----------------|
+| `get_slack_channel_history` | Fetch recent messages from a channel | `channels:history` |
+| `get_slack_thread_replies` | Get replies in a thread | `channels:history` |
+| `search_slack_messages` | Search for messages in Slack | `search:read` |
+| `get_slack_user_info` | Look up user details | `users:read` |
+| `get_slack_file_info` | Get file metadata | `files:read` |
+| `download_slack_file` | Download files to `slack_files/` | `files:read` |
+| `create_slack_channel` | Create new public or private channels | `channels:manage` / `groups:write` |
+
+### Examples
+
+**Fetch recent channel history:**
+> "What were we discussing earlier in this channel?"
+
+**Create a new channel:**
+> "Create a new channel called #project-updates for the team"
+
+**Download a shared file:**
+> "Download that screenshot Alice shared and analyze it"
 
 ## Memory Management
 

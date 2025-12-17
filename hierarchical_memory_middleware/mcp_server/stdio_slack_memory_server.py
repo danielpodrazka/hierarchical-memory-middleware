@@ -470,6 +470,103 @@ def create_slack_memory_server(
             return {"error": str(e)}
 
     @mcp.tool()
+    async def create_slack_channel(
+        name: str,
+        is_private: bool = False,
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new Slack channel.
+
+        Use this tool to create new public or private channels in the workspace.
+        Channel names must be lowercase, max 80 chars, and can only contain
+        letters, numbers, hyphens, and underscores.
+
+        Args:
+            name: Channel name (lowercase, no spaces, max 80 chars)
+            is_private: If True, create a private channel (default: False)
+            description: Optional channel description/purpose
+
+        Returns:
+            Channel info including ID, name, and creation status
+        """
+        try:
+            import httpx
+            import re
+
+            # Validate and normalize channel name
+            name = name.lower().strip()
+            name = re.sub(r'[^a-z0-9_-]', '-', name)  # Replace invalid chars with hyphens
+            name = re.sub(r'-+', '-', name)  # Collapse multiple hyphens
+            name = name[:80]  # Max 80 chars
+
+            if not name:
+                return {"error": "Channel name is required"}
+
+            async with httpx.AsyncClient() as client:
+                # Use conversations.create API
+                payload = {
+                    "name": name,
+                    "is_private": is_private,
+                }
+
+                response = await client.post(
+                    "https://slack.com/api/conversations.create",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {slack_bot_token}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=10.0,
+                )
+                data = response.json()
+
+            if not data.get("ok"):
+                error = data.get("error", "Unknown error")
+                error_messages = {
+                    "name_taken": f"Channel name '{name}' is already taken",
+                    "invalid_name": f"Invalid channel name: '{name}'",
+                    "no_channel": "Could not create channel",
+                    "restricted_action": "Bot doesn't have permission to create channels",
+                    "missing_scope": "Bot token needs channels:manage scope for public channels "
+                                    "or groups:write scope for private channels",
+                }
+                return {"error": error_messages.get(error, f"Slack API error: {error}")}
+
+            channel = data.get("channel", {})
+            channel_id = channel.get("id")
+
+            # Set channel description/purpose if provided
+            if description and channel_id:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        "https://slack.com/api/conversations.setPurpose",
+                        json={
+                            "channel": channel_id,
+                            "purpose": description[:250],  # Max 250 chars
+                        },
+                        headers={
+                            "Authorization": f"Bearer {slack_bot_token}",
+                            "Content-Type": "application/json",
+                        },
+                        timeout=10.0,
+                    )
+
+            return {
+                "success": True,
+                "channel_id": channel_id,
+                "name": channel.get("name"),
+                "is_private": channel.get("is_private", False),
+                "created": True,
+                "description": description[:250] if description else None,
+            }
+
+        except ImportError:
+            return {"error": "httpx not installed. Install with: pip install httpx"}
+        except Exception as e:
+            logger.error(f"Error creating Slack channel: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
     async def get_slack_file_info(
         file_id: str,
     ) -> Dict[str, Any]:
