@@ -687,6 +687,7 @@ Use these tools when you need more context about what was discussed in the chann
                             text=response_text,
                             active_tools=active_tool_calls,
                             completed_tool_names=completed_tool_names,
+                            completed_tools=completed_tools,
                             is_final=False,
                         )
                         last_update = now
@@ -708,6 +709,7 @@ Use these tools when you need more context about what was discussed in the chann
                             text=response_text,
                             active_tools=active_tool_calls,
                             completed_tool_names=completed_tool_names,
+                            completed_tools=completed_tools,
                             is_final=False,
                         )
 
@@ -722,7 +724,7 @@ Use these tools when you need more context about what was discussed in the chann
                             completed_tool_names.append(tool_info["name"])
                             completed_tools.append(tool_info.copy())
                             del active_tool_calls[event.tool_id]
-                        # Update to show tool result briefly
+                        # Update to show tool result
                         await self._update_response_message(
                             client=client,
                             channel_id=channel_id,
@@ -730,6 +732,7 @@ Use these tools when you need more context about what was discussed in the chann
                             text=response_text,
                             active_tools=active_tool_calls,
                             completed_tool_names=completed_tool_names,
+                            completed_tools=completed_tools,
                             is_final=False,
                         )
 
@@ -853,69 +856,92 @@ Use these tools when you need more context about what was discussed in the chann
         """
         parts = []
 
-        if not is_final and self.slack_config.show_tool_calls:
-            # STREAMING: Show detailed tool information
+        # Show tool information during streaming OR in final message (verbose mode)
+        show_tools = self.slack_config.show_tool_calls and (
+            not is_final or (is_final and self.slack_config.verbose_tools)
+        )
+
+        if show_tools:
             tool_lines = []
 
-            # Show completed tools (compact)
-            if completed_tool_names:
-                for name in completed_tool_names:
-                    tool_lines.append(f"✅ `{name}`")
+            if self.slack_config.verbose_tools:
+                # VERBOSE MODE: Show full tool details (args + results)
+                if completed_tools:
+                    for tool_info in completed_tools:
+                        name = tool_info["name"]
+                        args = tool_info.get("args", {})
+                        result = tool_info.get("result", "")
+                        is_error = tool_info.get("is_error", False)
 
-            # Show active tools with details
-            if active_tools and self.slack_config.show_tool_details:
-                for tool_id, tool_info in active_tools.items():
-                    name = tool_info["name"]
-                    args = tool_info.get("args", {})
+                        # Format args (as JSON code block, truncated)
+                        args_block = ""
+                        if args:
+                            import json
+                            args_str = json.dumps(args, indent=2)
+                            if len(args_str) > 500:
+                                args_str = args_str[:497] + "..."
+                            args_block = f"\n```{args_str}```"
 
-                    # Format args preview (truncate long values)
-                    args_preview = self._format_tool_args(args)
-                    if args_preview:
-                        tool_lines.append(f"🔧 `{name}` {args_preview}")
-                    else:
-                        tool_lines.append(f"🔧 `{name}` ⏳")
-            elif active_tools:
-                # Show just tool names without details
-                for tool_id, tool_info in active_tools.items():
-                    tool_lines.append(f"🔧 `{tool_info['name']}` ⏳")
+                        # Format result (truncated)
+                        result_block = ""
+                        if result:
+                            result_preview = result[:800] if len(result) > 800 else result
+                            # Truncate to first 10 lines
+                            lines = result_preview.split("\n")
+                            if len(lines) > 10:
+                                result_preview = "\n".join(lines[:10]) + f"\n... ({len(lines)} lines total)"
+                            status = ":x:" if is_error else ":white_check_mark:"
+                            result_block = f"\n{status} ```{result_preview}```"
+
+                        tool_lines.append(f":wrench: `{name}`{args_block}{result_block}")
+
+                # Show active tools (in progress)
+                if active_tools:
+                    for tool_id, tool_info in active_tools.items():
+                        name = tool_info["name"]
+                        args = tool_info.get("args", {})
+
+                        # Format args (as JSON code block, truncated)
+                        args_block = ""
+                        if args:
+                            import json
+                            args_str = json.dumps(args, indent=2)
+                            if len(args_str) > 500:
+                                args_str = args_str[:497] + "..."
+                            args_block = f"\n```{args_str}```"
+
+                        tool_lines.append(f":wrench: `{name}`{args_block}\n:hourglass_flowing_sand: _running..._")
+            else:
+                # COMPACT MODE: Show simple tool status
+                # Show completed tools (compact)
+                if completed_tool_names:
+                    for name in completed_tool_names:
+                        tool_lines.append(f":white_check_mark: `{name}`")
+
+                # Show active tools with details
+                if active_tools and self.slack_config.show_tool_details:
+                    for tool_id, tool_info in active_tools.items():
+                        name = tool_info["name"]
+                        args = tool_info.get("args", {})
+
+                        # Format args preview (truncate long values)
+                        args_preview = self._format_tool_args(args)
+                        if args_preview:
+                            tool_lines.append(f":wrench: `{name}` {args_preview}")
+                        else:
+                            tool_lines.append(f":wrench: `{name}` :hourglass_flowing_sand:")
+                elif active_tools:
+                    # Show just tool names without details
+                    for tool_id, tool_info in active_tools.items():
+                        tool_lines.append(f":wrench: `{tool_info['name']}` :hourglass_flowing_sand:")
 
             if tool_lines:
-                parts.append("\n".join(tool_lines))
+                if is_final and self.slack_config.verbose_tools:
+                    parts.append("*Tool Calls:*")
+                parts.append("\n\n".join(tool_lines))
+                if is_final and self.slack_config.verbose_tools:
+                    parts.append("---")  # Divider before response text
                 parts.append("")
-
-        elif is_final and self.slack_config.verbose_tools and completed_tools:
-            # VERBOSE MODE: Show full tool details in final message
-            parts.append("*Tool Calls:*")
-            for tool_info in completed_tools:
-                name = tool_info["name"]
-                args = tool_info.get("args", {})
-                result = tool_info.get("result", "")
-                is_error = tool_info.get("is_error", False)
-
-                # Format tool call header
-                parts.append(f"▶ `{name}`")
-
-                # Format args (as JSON code block, truncated)
-                if args:
-                    import json
-                    args_str = json.dumps(args, indent=2)
-                    if len(args_str) > 500:
-                        args_str = args_str[:497] + "..."
-                    parts.append(f"```{args_str}```")
-
-                # Format result (truncated)
-                if result:
-                    result_preview = result[:800] if len(result) > 800 else result
-                    # Truncate to first 10 lines
-                    lines = result_preview.split("\n")
-                    if len(lines) > 10:
-                        result_preview = "\n".join(lines[:10]) + f"\n... ({len(lines)} lines total)"
-                    status = "❌" if is_error else "◀"
-                    parts.append(f"{status} ```{result_preview}```")
-
-                parts.append("")  # Empty line between tools
-
-            parts.append("---")  # Divider before response text
 
         # Add response text
         if text:
