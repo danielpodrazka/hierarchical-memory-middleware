@@ -1299,6 +1299,14 @@ class DuckDBStorage:
         total_tokens = (input_tokens or 0) + (output_tokens or 0)
 
         with self._get_connection() as conn:
+            # Ensure conversation exists before inserting token usage (FK constraint)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO conversations (id, total_nodes, compression_stats)
+                VALUES (?, 0, '{}')
+                """,
+                (conversation_id,),
+            )
             result = conn.execute(
                 """
                 INSERT INTO token_usage (
