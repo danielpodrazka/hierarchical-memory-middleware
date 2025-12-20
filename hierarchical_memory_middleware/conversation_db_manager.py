@@ -299,7 +299,7 @@ class ConversationDBManager:
         if conv_data:
             active_conn.execute(
                 """
-                INSERT INTO conversations (id, name, total_nodes, compression_stats,
+                INSERT OR REPLACE INTO conversations (id, name, total_nodes, compression_stats,
                     current_goal, key_decisions, system_prompt, created_at, last_updated)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -329,7 +329,7 @@ class ConversationDBManager:
 
             active_conn.execute(
                 f"""
-                INSERT INTO nodes (node_id, conversation_id, node_type, content, timestamp,
+                INSERT OR REPLACE INTO nodes (node_id, conversation_id, node_type, content, timestamp,
                     sequence_number, line_count, level, summary, summary_metadata,
                     parent_summary_node_id, tokens_used, expandable, ai_components,
                     topics, embedding, relates_to_node_id)
@@ -352,7 +352,7 @@ class ConversationDBManager:
         for usage in token_usage:
             active_conn.execute(
                 """
-                INSERT INTO token_usage (id, conversation_id, timestamp, input_tokens,
+                INSERT OR REPLACE INTO token_usage (id, conversation_id, timestamp, input_tokens,
                     output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
                     cost_usd, duration_ms, model)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
