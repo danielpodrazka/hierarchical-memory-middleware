@@ -665,6 +665,150 @@ def create_slack_memory_server(
             return {"error": str(e)}
 
     @mcp.tool()
+    async def upload_slack_file(
+        file_path: str,
+        channel_id: Optional[str] = None,
+        title: Optional[str] = None,
+        initial_comment: Optional[str] = None,
+        thread_ts: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Upload a file to Slack and share it in a channel.
+
+        Use this tool to share files (code, images, documents, etc.) back to Slack.
+        The file will be uploaded and posted as a message in the specified channel.
+
+        Args:
+            file_path: Absolute path to the file to upload
+            channel_id: Channel to share the file in (defaults to current channel)
+            title: Optional title for the file (defaults to filename)
+            initial_comment: Optional message to post with the file
+            thread_ts: Optional thread timestamp to post the file as a reply
+
+        Returns:
+            File info including ID, permalink, and sharing status
+        """
+        try:
+            import httpx
+            from pathlib import Path
+
+            file_path_obj = Path(file_path)
+
+            if not file_path_obj.exists():
+                return {"error": f"File not found: {file_path}"}
+
+            if not file_path_obj.is_file():
+                return {"error": f"Path is not a file: {file_path}"}
+
+            # Check file size (Slack free tier limit is 1GB, but let's be reasonable)
+            file_size = file_path_obj.stat().st_size
+            max_size = 50 * 1024 * 1024  # 50MB limit
+            if file_size > max_size:
+                return {
+                    "error": f"File too large: {file_size / 1024 / 1024:.1f}MB "
+                    f"(max: {max_size / 1024 / 1024:.0f}MB)"
+                }
+
+            # Use provided channel or default
+            target_channel = channel_id or slack_channel_id
+
+            # Read file content
+            file_content = file_path_obj.read_bytes()
+            file_name = file_path_obj.name
+
+            # Determine content type
+            import mimetypes
+            content_type, _ = mimetypes.guess_type(file_name)
+            content_type = content_type or "application/octet-stream"
+
+            async with httpx.AsyncClient() as client:
+                # Step 1: Get upload URL using files.getUploadURLExternal
+                url_response = await client.post(
+                    "https://slack.com/api/files.getUploadURLExternal",
+                    data={
+                        "filename": file_name,
+                        "length": len(file_content),
+                    },
+                    headers={"Authorization": f"Bearer {slack_bot_token}"},
+                    timeout=30.0,
+                )
+                url_data = url_response.json()
+
+                if not url_data.get("ok"):
+                    error = url_data.get("error", "Unknown error")
+                    error_messages = {
+                        "missing_scope": "Bot token needs files:write scope to upload files",
+                        "invalid_auth": "Invalid authentication token",
+                        "file_too_large": "File exceeds Slack's size limit",
+                    }
+                    return {"error": error_messages.get(error, f"Slack API error: {error}")}
+
+                upload_url = url_data.get("upload_url")
+                file_id = url_data.get("file_id")
+
+                # Step 2: Upload file to the URL
+                upload_response = await client.post(
+                    upload_url,
+                    content=file_content,
+                    headers={"Content-Type": content_type},
+                    timeout=60.0,
+                )
+
+                if upload_response.status_code != 200:
+                    return {"error": f"Failed to upload file: HTTP {upload_response.status_code}"}
+
+                # Step 3: Complete the upload and share to channel
+                complete_payload = {
+                    "files": [{"id": file_id, "title": title or file_name}],
+                    "channel_id": target_channel,
+                }
+
+                if initial_comment:
+                    complete_payload["initial_comment"] = initial_comment
+
+                if thread_ts:
+                    complete_payload["thread_ts"] = thread_ts
+
+                complete_response = await client.post(
+                    "https://slack.com/api/files.completeUploadExternal",
+                    json=complete_payload,
+                    headers={
+                        "Authorization": f"Bearer {slack_bot_token}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=30.0,
+                )
+                complete_data = complete_response.json()
+
+                if not complete_data.get("ok"):
+                    error = complete_data.get("error", "Unknown error")
+                    error_messages = {
+                        "channel_not_found": f"Channel '{target_channel}' not found or bot not in channel",
+                        "not_in_channel": "Bot is not a member of the channel",
+                        "file_not_found": "Upload failed - file not found",
+                    }
+                    return {"error": error_messages.get(error, f"Slack API error: {error}")}
+
+                files = complete_data.get("files", [])
+                uploaded_file = files[0] if files else {}
+
+                return {
+                    "success": True,
+                    "file_id": uploaded_file.get("id", file_id),
+                    "filename": file_name,
+                    "title": title or file_name,
+                    "channel_id": target_channel,
+                    "permalink": uploaded_file.get("permalink"),
+                    "size_bytes": len(file_content),
+                    "shared": True,
+                }
+
+        except ImportError:
+            return {"error": "httpx not installed. Install with: pip install httpx"}
+        except Exception as e:
+            logger.error(f"Error uploading file to Slack: {e}")
+            return {"error": str(e)}
+
+    @mcp.tool()
     async def get_slack_file_info(
         file_id: str,
     ) -> Dict[str, Any]:

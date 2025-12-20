@@ -267,11 +267,17 @@ SLACK TOOLS: You have access to tools for fetching more Slack context:
 - `get_slack_user_info`: Look up user details by user ID
 - `download_slack_file`: Download files shared in Slack to the slack_files directory
 - `get_slack_file_info`: Get file metadata including download URL
+- `upload_slack_file`: Upload and share a file to Slack (code, images, documents, etc.)
 
 FILE HANDLING: When users share files in Slack:
 1. Use `download_slack_file` with the file URL to save it locally
 2. For images: After downloading, use the Read tool with the saved path to view the image
 3. For text files: Use the Read tool to read the contents
+
+SHARING FILES: To share files back to Slack:
+1. Use `upload_slack_file` with the file path to upload and share it
+2. Optionally add a title and initial_comment to describe the file
+3. The file will be posted in the current channel (or specify a different channel_id)
 
 Use these tools when you need more context about what was discussed in the channel."""
 
